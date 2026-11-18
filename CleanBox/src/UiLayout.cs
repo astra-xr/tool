@@ -102,7 +102,7 @@ namespace CleanBox {
             stepLabel=TextLabel("优先正常退出程序，再移到回收站。检测可能受权限、驱动和文件夹句柄限制。",43,"muted");stepLabel.Dock=DockStyle.Fill;bottom.Controls.Add(stepLabel);bottom.Controls.Add(deleteBar);
             p.Controls.Add(result);p.Controls.Add(bottom);p.Controls.Add(inspectBar);p.Controls.Add(dropZone);p.Controls.Add(stepBar);p.Controls.Add(heading);UpdateFileActions();return p;
         }
-        Panel BuildLog(){var p=Page();var heading=Heading("操作记录","查看扫描进展、处理结果和失败原因");var bar=Bar();bar.Controls.Add(Button("打开日志目录",()=>OpenPath(Store.Data)));bar.Controls.Add(Button("使用说明",()=>{try{Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,"notepad.exe"),"\""+Path.Combine(Store.Home,"使用说明.txt")+"\""){UseShellExecute=true});}catch(Exception e){ShowError(e);}}));
+        Panel BuildLog(){var p=Page();var heading=Heading("操作记录","查看扫描进展、处理结果和失败原因");var bar=Bar();bar.Controls.Add(Button("打开日志目录",()=>OpenPath(Store.Data)));bar.Controls.Add(Button("查看逐项清理记录",()=>OpenPath(Path.Combine(Store.Data,"cleanup"))));bar.Controls.Add(Button("使用说明",()=>{try{Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,"notepad.exe"),"\""+Path.Combine(Store.Home,"使用说明.txt")+"\""){UseShellExecute=true});}catch(Exception e){ShowError(e);}}));
             logBox=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Both,WordWrap=false,BorderStyle=BorderStyle.FixedSingle,Font=new Font("Consolas",10)};
             try{string file=Path.Combine(Store.Data,"operations.log");if(File.Exists(file)){string s=File.ReadAllText(file);logBox.Text=s.Length>100000?s.Substring(s.Length-100000):s;}}catch{}
             p.Controls.Add(logBox);p.Controls.Add(bar);p.Controls.Add(heading);return p;}

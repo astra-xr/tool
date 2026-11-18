@@ -11,7 +11,7 @@ using System.Threading;
 
 namespace CleanBox {
     public class LockOwner {
-        public int Pid; public long Started; public string Name="", Path="", Kind=""; public bool CanStop;
+        public int Pid; public long Started; public string Name="", Path="", Kind=""; public bool CanStop, Confirmed;
         public string Display { get { return Name+"  · PID "+Pid+"  · "+Kind+(CanStop?"":" · 受保护/无法核实"); } }
     }
     public class LockReport { public List<LockOwner> Owners=new List<LockOwner>();public int Files;public bool Partial;public string Note="";public long? SizeBytes;public bool SizePartial; }
@@ -56,22 +56,56 @@ namespace CleanBox {
                 measured++;
             }
             if(measured>0||!report.SizePartial) report.SizeBytes=bytes;
-            var owners=new Dictionary<int,LockOwner>();uint session;int rc=RmStartSession(out session,0,new StringBuilder(33));
-            if(rc!=0)throw new Win32Exception(rc,"无法开启文件占用检查");
+            var owners = new Dictionary<int, LockOwner>();
+            if (files.Count > 0) {
+                try { QueryRestartManager(files, token, report, owners); }
+                catch (DllNotFoundException) { NoteFailure(report, "Windows 占用检测组件不可用。"); }
+                catch (EntryPointNotFoundException) { NoteFailure(report, "Windows 占用检测接口不可用。"); }
+            }
             try {
-                for(int offset=0;offset<files.Count;offset+=256) {token.ThrowIfCancellationRequested();string[] batch=files.Skip(offset).Take(256).ToArray();rc=RmRegisterResources(session,(uint)batch.Length,batch,0,IntPtr.Zero,0,null);if(rc!=0){report.Partial=true;report.Note="部分文件未能登记："+new Win32Exception(rc).Message;}}
+                foreach (var process in Process.GetProcesses()) using (process) {
+                    token.ThrowIfCancellationRequested();
+                    try {
+                        string executable = process.MainModule.FileName;
+                        if (Safety.Within(executable, root) && !owners.ContainsKey(process.Id)) {
+                            var owner = Describe(process.Id);
+                            owner.Kind = "从目标运行（占用未确认）";
+                            owners[process.Id] = owner;
+                        }
+                    } catch (Win32Exception) { }
+                    catch (InvalidOperationException) { }
+                }
+            } catch (Win32Exception ex) { NoteFailure(report, "进程列表未能完整读取：" + ex.Message); }
+            report.Owners = owners.Values.OrderByDescending(owner => owner.Confirmed).ThenBy(owner => owner.Pid).ToList();
+            return report;
+        }
+
+        static void NoteFailure(LockReport report, string note) {
+            report.Partial = true;
+            report.Note = report.Note.Length == 0 ? note : report.Note + "\r\n" + note;
+        }
+
+        static void QueryRestartManager(List<string> files, CancellationToken token, LockReport report, Dictionary<int, LockOwner> owners) {
+            uint session;
+            int rc = RmStartSession(out session, 0, new StringBuilder(33));
+            if (rc != 0) {
+                NoteFailure(report, "Windows 占用检测未能启动：" + new Win32Exception(rc).Message);
+                return;
+            }
+            int registerError = 0;
+            try {
+                for(int offset=0;offset<files.Count;offset+=256) {token.ThrowIfCancellationRequested();string[] batch=files.Skip(offset).Take(256).ToArray();rc=RmRegisterResources(session,(uint)batch.Length,batch,0,IntPtr.Zero,0,null);if(rc!=0)registerError=rc;}
+                if (registerError != 0) NoteFailure(report, "部分文件未能登记到 Windows 占用检测：" + new Win32Exception(registerError).Message);
                 uint need=0,count=0,reasons=0;rc=RmGetList(session,out need,ref count,null,ref reasons);
                 for(int retry=0;rc==234&&retry<6;retry++) {var data=new RM_PROCESS_INFO[need];count=need;rc=RmGetList(session,out need,ref count,data,ref reasons);if(rc==0)for(int i=0;i<count;i++){
                     var r=data[i];long start=((long)(uint)r.Process.ProcessStartTime.dwHighDateTime<<32)|(uint)r.Process.ProcessStartTime.dwLowDateTime;
-                    var owner=Describe(r.Process.dwProcessId);owner.Name=string.IsNullOrWhiteSpace(r.strAppName)?owner.Name:r.strAppName;owner.Kind="文件占用";
+                    var owner=Describe(r.Process.dwProcessId);owner.Name=string.IsNullOrWhiteSpace(r.strAppName)?owner.Name:r.strAppName;owner.Kind="文件占用";owner.Confirmed=true;
                     if(owner.Started!=start)owner.CanStop=false;owner.Started=start;
                     if(r.ApplicationType==3||r.ApplicationType==4||r.ApplicationType==1000) owner.CanStop=false;
                     owners[owner.Pid]=owner;
                 }}
-                if(rc!=0) { report.Partial=true;report.Note="Windows 返回："+new Win32Exception(rc).Message; }
+                if(rc!=0) NoteFailure(report,"未能读取 Windows 占用结果："+new Win32Exception(rc).Message);
             } finally {RmEndSession(session);}
-            foreach(var p in Process.GetProcesses()) using(p) {token.ThrowIfCancellationRequested();try {string executable=p.MainModule.FileName;if(Safety.Within(executable,root)&&!owners.ContainsKey(p.Id)){var owner=Describe(p.Id);owner.Kind="在此目录运行";owners[p.Id]=owner;}}catch{}}
-            report.Owners=owners.Values.OrderBy(x=>x.Pid).ToList();return report;
         }
         static LockOwner Describe(int pid) {
             var owner=new LockOwner{Pid=pid,Name="进程 "+pid};

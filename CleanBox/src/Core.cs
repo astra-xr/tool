@@ -253,42 +253,83 @@ namespace CleanBox {
             if(!Directory.Exists(p)&&!File.Exists(p)) throw new FileNotFoundException("目标已经不存在。",p);
             return p;
         }
-        public static List<string> Plan(string root,bool test=false) {
+        public static List<string> Plan(string root,bool test=false,CancellationToken token=default(CancellationToken)) {
             root=Check(root,test); var result=new List<string>(); var stack=new Stack<string>();stack.Push(root);
-            while(stack.Count>0) { string p=stack.Pop(); if(!Within(p,root)||HasReparseAncestor(p)) throw new IOException("检测到越界或目录链接，操作停止："+p);
-                result.Add(p); if(Directory.Exists(p)) foreach(string child in Directory.GetFileSystemEntries(p)) { if(IsSystemTree(child)) throw new IOException("目录内包含受保护项目，操作停止。"); stack.Push(child); }
+            while(stack.Count>0) { token.ThrowIfCancellationRequested(); string p=stack.Pop(); if(!Within(p,root)||HasReparseAncestor(p)) throw new IOException("检测到越界或目录链接，操作停止："+p);
+                result.Add(p); if(Directory.Exists(p)) foreach(string child in Directory.EnumerateFileSystemEntries(p)) { token.ThrowIfCancellationRequested(); if(IsSystemTree(child)) throw new IOException("目录内包含受保护项目，操作停止。"); stack.Push(child); }
             }
             return result.OrderByDescending(s=>s.Length).ToList();
         }
     }
-    public class DeleteResult { public int Done; public List<string> Failed=new List<string>(); public string Summary { get { return "成功 "+Done+" 项；失败 "+Failed.Count+" 项"; } } }
     public static class Operations {
         public static DeleteResult Permanent(string root,bool test=false) {
-            root=Safety.Check(root,test); var plan=Safety.Plan(root,test); var r=new DeleteResult();
-            foreach(string p in plan) try {
-                if(!Safety.Within(p,root)||Safety.HasReparseAncestor(p)) throw new IOException("路径边界已变化");
-                if(!File.Exists(p)&&!Directory.Exists(p)) continue;
-                File.SetAttributes(p,File.GetAttributes(p)&~FileAttributes.ReadOnly);
-                if(Directory.Exists(p)) Directory.Delete(p,false);else File.Delete(p);r.Done++;
-            } catch(Exception e) { r.Failed.Add(p+"："+e.Message); }
-            Store.Log("永久删除 "+root+"；"+r.Summary+"\n"+string.Join("\n",r.Failed));return r;
+            return Permanent(CleanupPlan.Capture(root,CancellationToken.None,test), false);
+        }
+        internal static DeleteResult Permanent(CleanupPlan plan, bool verify = true) {
+            if (verify) plan.VerifyCurrent();
+            return DeleteItems(plan, false);
         }
         public static DeleteResult Reboot(string root) {
-            if(!Native.IsAdmin) throw new IOException("重启后删除需要管理员权限，请点击右上角的管理员模式。");
-            root=Safety.Check(root);var plan=Safety.Plan(root);var r=new DeleteResult();
-            foreach(string p in plan) {
-                if(Safety.HasReparseAncestor(p)) { r.Failed.Add(p+"：路径已变化"); continue; }
-                if(Native.MoveFileEx(p,null,4)) {r.Done++;Store.Log("已登记重启后永久删除："+p);} else r.Failed.Add(p+"："+new System.ComponentModel.Win32Exception().Message);
-            }
-            Store.Log("重启删除登记 "+root+"；"+r.Summary);return r;
+            return Reboot(CleanupPlan.Capture(root,CancellationToken.None), false);
         }
-        public static void Recycle(string root) { Recycle(root,null); }
-        internal static void Recycle(string root,Action beforeRecycle) {
-            root=Safety.Check(root);Safety.Plan(root); // Preflight rejects links and inaccessible subtrees before handing to the shell.
-            if(beforeRecycle!=null) { beforeRecycle(); Safety.Check(root); }
-            if(Directory.Exists(root)) Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(root,Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
-            else Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(root,Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
-            Store.Log("移至回收站："+root);
+        internal static DeleteResult Reboot(CleanupPlan plan, bool verify = true) {
+            if(!Native.IsAdmin) throw new UnauthorizedAccessException("重启后删除需要管理员权限，请在设置中选择“以管理员重启”。");
+            if (verify) plan.VerifyCurrent();
+            return DeleteItems(plan, true);
+        }
+        static DeleteResult DeleteItems(CleanupPlan plan, bool reboot) {
+            var result = new DeleteResult { SuccessLabel = reboot ? "已登记重启删除" : "已删除" };
+            foreach (var item in plan.Items) try {
+                if(!Safety.Within(item.Path,plan.Root)||Safety.HasReparseAncestor(item.Path)) throw new IOException("路径边界已变化。");
+                var attributes = File.GetAttributes(item.Path);
+                if (((attributes & FileAttributes.Directory) != 0) != item.Directory) throw new IOException("目标类型已变化。");
+                if (reboot) {
+                    if (!Native.MoveFileEx(item.Path,null,4)) throw new System.ComponentModel.Win32Exception();
+                    result.Success(item.Path,"已登记重启删除");
+                } else {
+                    if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(item.Path, attributes & ~FileAttributes.ReadOnly);
+                    if (item.Directory) Directory.Delete(item.Path,false); else File.Delete(item.Path);
+                    result.Success(item.Path,"已删除");
+                }
+            } catch (FileNotFoundException) { result.Skip(item.Path,"目标已不存在。"); }
+            catch (DirectoryNotFoundException) { result.Skip(item.Path,"目标已不存在。"); }
+            catch (Exception ex) { result.Fail(item.Path,DeleteResult.Reason(ex)); }
+            result.Record(reboot ? "登记重启删除" : "永久删除", plan.Root);
+            return result;
+        }
+        public static void Recycle(string root) {
+            var result = Recycle(CleanupPlan.Capture(root, CancellationToken.None), null, false);
+            if (result.Canceled) throw new OperationCanceledException();
+            if (result.Failed.Count > 0) throw new IOException(result.Failed[0]);
+            if (result.Skipped > 0) throw new IOException("部分位置未能核实回收结果。");
+        }
+        internal static DeleteResult Recycle(CleanupPlan plan, Action beforeRecycle = null, bool verify = true) {
+            if (beforeRecycle != null) beforeRecycle();
+            if (verify || beforeRecycle != null) plan.VerifyCurrent();
+            var result = new DeleteResult { SuccessLabel = "已提交回收站并移出原处" };
+            Exception shellError = null;
+            try {
+                if (Directory.Exists(plan.Root)) Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(plan.Root,Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
+                else Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(plan.Root,Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
+            } catch (OperationCanceledException) { result.Canceled = true; }
+            catch (IOException ex) { shellError = ex; }
+            catch (UnauthorizedAccessException ex) { shellError = ex; }
+            Action<string> recordMissing = path => {
+                if (result.Canceled || shellError != null) result.Skip(path,"原路径已不存在，回收结果未能核实。");
+                else result.Success(path,"已提交回收站并移出原处");
+            };
+            foreach (var item in plan.Items) {
+                try {
+                    File.GetAttributes(item.Path);
+                    if (result.Canceled) result.Skip(item.Path,"已取消，原路径仍存在。");
+                    else result.Fail(item.Path,shellError != null ? DeleteResult.Reason(shellError) : "原路径仍存在。");
+                } catch (FileNotFoundException) { recordMissing(item.Path); }
+                catch (DirectoryNotFoundException) { recordMissing(item.Path); }
+                catch (IOException ex) { result.Fail(item.Path,"无法核实处理结果：" + DeleteResult.Reason(ex)); }
+                catch (UnauthorizedAccessException ex) { result.Fail(item.Path,"无法核实处理结果：" + DeleteResult.Reason(ex)); }
+            }
+            result.Record("Windows 回收站处理",plan.Root);
+            return result;
         }
         public static void Uninstall(AppEntry a) {
             if(a.Protected) throw new IOException("此项被 Windows 标记为系统组件，本工具不卸载它。");

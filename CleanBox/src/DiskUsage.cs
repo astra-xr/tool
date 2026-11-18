@@ -8,7 +8,7 @@ using System.Threading;
 namespace CleanBox {
     internal sealed class UsageNode {
         internal string Path, Name;
-        internal bool Directory, Partial, Link;
+        internal bool Directory, Partial, Link, ListingComplete;
         internal long Bytes;
         internal UsageNode Parent;
         internal readonly List<UsageNode> Children = new List<UsageNode>();
@@ -19,6 +19,7 @@ namespace CleanBox {
         internal List<UsageNode> Largest;
         internal int Files, Skipped;
         internal bool Canceled, Limited;
+        internal DateTime ScannedUtc;
     }
     internal static class DiskUsage {
         internal static UsageResult Scan(string input, CancellationToken token, Action<string> progress, int maxEntries = 300000) {
@@ -58,6 +59,7 @@ namespace CleanBox {
                             reported = clock.ElapsedMilliseconds; progress("已发现 " + nodes.Count + " 项 · " + result.Files + " 个文件");
                         }
                     }
+                    current.ListingComplete = !current.Partial;
                 } catch (IOException) { current.Partial = true; result.Skipped++; }
                 catch (UnauthorizedAccessException) { current.Partial = true; result.Skipped++; }
                 catch (System.Security.SecurityException) { current.Partial = true; result.Skipped++; }
@@ -71,6 +73,7 @@ namespace CleanBox {
                 node.Parent.Partial |= node.Partial;
             }
             root.Partial |= result.Canceled || result.Limited;
+            result.ScannedUtc = DateTime.UtcNow;
             result.Largest = nodes.Where(n => !n.Directory && !n.Link && !n.Partial).OrderByDescending(n => n.Bytes).ThenBy(n => n.Path, StringComparer.OrdinalIgnoreCase).Take(200).ToList();
             return result;
         }

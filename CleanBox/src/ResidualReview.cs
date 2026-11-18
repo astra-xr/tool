@@ -226,18 +226,23 @@ namespace CleanBox {
                 fileTools = Button("文件解锁…", () => { var item = selected(); if (item != null) { pathBox.Text = item.Path; SwitchPage(1); f.Close(); } });
                 recycle = Button("移到回收站…", async () => {
                     var item = selected(); if (running || item == null) return;
-                    using (var confirmation = BuildConfirmation("移到回收站", item.Path + "\r\n\r\n" + item.DisplaySize + "（当前统计，可能变化）\r\n发现依据：" + item.Evidence + "\r\n\r\n将处理该目标及其全部内容。配置目录可能含个人数据，请确认归属及保留需要。Windows 若提示无法回收，可取消。", false))
-                        if (confirmation.ShowDialog(f) != DialogResult.OK) return;
-                    running = true; refresh.Enabled = false; selectionChanged();
+                    running = true; refresh.Enabled = false; selectionChanged(); note.Text = "正在生成清理预览…";
                     try {
                         var token = cancellation.Token;
-                        await RecycleInBackground(item.Path, () => ResidualReview.EnsureCanRecycle(app, item.Path, token));
-                        note.Text = "已完成回收站操作。";
+                        var plan = await Task.Run(() => CleanupPlan.Capture(item.Path, token));
+                        token.ThrowIfCancellationRequested();
+                        using (var confirmation = BuildConfirmation("移到回收站", plan.Preview + "\r\n发现依据：" + item.Evidence
+                            + "\r\n\r\n将处理该目标及其全部内容。请核对配置目录内需要保留的数据。Windows 若提示无法回收，请取消。", false)) {
+                            if (confirmation.ShowDialog(f) != DialogResult.OK) { note.Text = "已取消清理。"; return; }
+                        }
+                        var result = await RecycleInBackground(plan, () => ResidualReview.EnsureCanRecycle(app, item.Path, token));
+                        if (!closeRequested) ShowCleanupResult(f, result);
+                        note.Text = result.Summary;
                     }
-                    catch (OperationCanceledException) { note.Text = "已取消本次回收。"; }
-                    catch (Exception ex) { MessageBox.Show(f, ex.Message, "未能完成回收"); }
-                    finally { running = false; refresh.Enabled = true; }
-                    if (closeRequested) f.Close(); else await load();
+                    catch (OperationCanceledException) { note.Text = "已取消本次回收。"; return; }
+                    catch (Exception ex) { note.Text = "未能完成回收：" + DeleteResult.Reason(ex); Store.Log(note.Text); return; }
+                    finally { running = false; refresh.Enabled = true; selectionChanged(); if (closeRequested) f.Close(); }
+                    if (!closeRequested) await load();
                 });
                 actions.Controls.AddRange(new Control[] { refresh, open, recycle, fileTools });
                 recycle.Name = "reviewRecycle";
@@ -256,9 +261,9 @@ namespace CleanBox {
         }
 
         // The shell recycle UI requires an STA thread; directory preflight must not freeze the main window.
-        static Task RecycleInBackground(string path, Action beforeRecycle = null) {
-            var completion = new TaskCompletionSource<bool>();
-            var thread = new Thread(() => { try { Operations.Recycle(path, beforeRecycle); completion.SetResult(true); } catch (Exception ex) { completion.SetException(ex); } });
+        static Task<DeleteResult> RecycleInBackground(CleanupPlan plan, Action beforeRecycle = null) {
+            var completion = new TaskCompletionSource<DeleteResult>();
+            var thread = new Thread(() => { try { completion.SetResult(Operations.Recycle(plan, beforeRecycle)); } catch (Exception ex) { completion.SetException(ex); } });
             thread.IsBackground = true; thread.SetApartmentState(ApartmentState.STA); thread.Start(); return completion.Task;
         }
     }

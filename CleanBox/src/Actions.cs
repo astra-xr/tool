@@ -62,10 +62,13 @@ namespace CleanBox {
                 lockSize.Text="目标大小："+size;
                 foreach(var o in report.Owners)lockList.Items.Add(o);
                 if(lockList.Items.Count>0)lockList.SelectedIndex=0;
-                lockSummary.Text="检查 "+report.Files+" 个文件，找到 "+report.Owners.Count+" 个相关进程。"+(report.Partial?" 检查不完整（上限 / 权限限制）。":"")+"\r\n"+(report.Note.Length>0?report.Note:"未列出进程不代表没有占用；驱动、文件夹句柄或权限限制可能无法识别。");
+                int confirmed=report.Owners.Count(owner=>owner.Confirmed);
+                lockSummary.Text="检查 "+report.Files+" 个文件 · 确认占用 "+confirmed+" · 仅供排查 "+(report.Owners.Count-confirmed)
+                    +(report.Partial?" · 部分结果":"")+"\r\n"+(report.Note.Length>0?report.Note:"从目标运行的进程仅供排查。文件夹句柄、驱动占用或权限受限的情况可能无法识别。");
+                tips.SetToolTip(lockSummary,lockSummary.Text);
                 SetStep(report.Owners.Count>0?1:2);
                 latestStatus=report.Partial?"占用检查部分完成，详情见当前页面":"占用检查完成";
-                Store.Log(latestStatus+"："+lockPath+"；相关进程 "+report.Owners.Count);
+                Store.Log(latestStatus+"："+lockPath+"；相关进程 "+report.Owners.Count+(report.Note.Length>0?"\n"+report.Note:""));
             } catch(OperationCanceledException) {
                 lockSize.Text="目标大小：—";lockSummary.Text="已取消检查，请重新检查后再处理。";latestStatus="占用检查已取消";SetStep(0);
             } catch(Exception e) {
@@ -75,15 +78,59 @@ namespace CleanBox {
         async Task StopOwner(bool force){if(!Idle())return;var owner=lockList.SelectedItem as LockOwner;if(owner==null)return;if(!owner.CanStop){MessageBox.Show(this,"该进程属于系统或无法核实身份。可手动退出软件，或对具体文件选择重启后删除。","不能结束此进程");return;}
             if(!Confirm(force?"强制结束进程":"请求正常退出",owner.Display+"\r\n"+owner.Path+(force?"\r\n\r\n该程序尚未保存的内容会丢失。":"\r\n\r\n程序可能会弹出保存提示。"),force))return;
             try{MessageBox.Show(this,Native.Stop(owner,force),"处理结果");await Inspect();}catch(Exception e){ShowError(e);}}
-        async Task DeleteTarget(int mode){if(!Idle())return;string p;try{p=Safety.Check(pathBox.Text);}catch(Exception e){ShowError(e);return;}
-            string title=mode==0?"移到回收站":mode==1?"永久删除":"登记重启后删除";
-            string explanation=mode==0?"将目标及其全部内容交给 Windows 回收站处理。若系统提示无法回收，可取消。":mode==1?"将删除目标及其全部内容，不经过回收站；已删除的项目无法由本工具恢复。":"将在下次系统重启时永久删除目标及其当前内容，不经过回收站。本工具不会替你重启；登记后不能从本工具撤销。";
-            if(!Confirm(title,p+"\r\n\r\n"+explanation+"\r\n\r\n请确认这是具体的软件或文件目录，不包含其他需要保留的数据。",mode!=0))return;
-            Busy(true);latestStatus="正在"+title+"…";try{
-                if(mode==0){await RecycleInBackground(p);MessageBox.Show(this,"已完成回收站操作。","完成");}
-                else {DeleteResult result=await Task.Run(()=>mode==1?Operations.Permanent(p):Operations.Reboot(p));MessageBox.Show(this,result.Summary+(mode==2?"\r\n成功项已登记在 Windows 中，待重启处理；实际删除结果需重启后确认。":"")+(result.Failed.Count>0?"\r\n\r\n"+string.Join("\r\n",result.Failed.Take(6))+"\r\n完整结果见操作记录。":""),"处理结果",MessageBoxButtons.OK,result.Failed.Count>0?MessageBoxIcon.Warning:MessageBoxIcon.Information);}
-                latestStatus=title+"处理结束，详情见操作记录";lockList.Items.Clear();lockPath="";SetStep(2);lockSize.Text="目标大小：—";lockSummary.Text="操作结束；如需再次处理，请先重新检查占用。";
-            }catch(Exception e){ShowError(e);}finally{Busy(false);}}
+        async Task DeleteTarget(int mode) {
+            if (!Idle()) return;
+            string target = pathBox.Text;
+            CleanupPlan plan;
+            cts = new CancellationTokenSource(); Busy(true, true);
+            latestStatus = "正在生成清理预览…";
+            try { plan = await Task.Run(() => CleanupPlan.Capture(target, cts.Token)); }
+            catch (OperationCanceledException) { latestStatus = "已取消生成清理预览。"; return; }
+            catch (Exception ex) { ShowError(ex); return; }
+            finally { Busy(false); cts.Dispose(); cts = null; }
+
+            string title = mode == 0 ? "移到回收站" : mode == 1 ? "永久删除" : "登记重启后删除";
+            string explanation = mode == 0 ? "将目标及其全部内容交给 Windows 回收站处理。若系统提示无法回收，请取消。"
+                : mode == 1 ? "目标及其全部内容将被永久删除。"
+                : "已登记的路径将在下次系统重启时尝试永久删除。请在重启后核对结果。";
+            latestStatus = "清理预览已生成。";
+            if (!Confirm(title, plan.Preview + "\r\n\r\n" + explanation + "\r\n\r\n请核对目标与处理范围。", mode != 0)) {
+                latestStatus = "已取消清理。"; return;
+            }
+            Busy(true); latestStatus = "正在" + title + "…";
+            try {
+                DeleteResult result = mode == 0 ? await RecycleInBackground(plan)
+                    : await Task.Run(() => mode == 1 ? Operations.Permanent(plan) : Operations.Reboot(plan));
+                ShowCleanupResult(this, result, mode == 2);
+                latestStatus = result.Summary;
+                lockList.Items.Clear(); lockPath = ""; SetStep(2); lockSize.Text = "目标大小：—";
+                lockSummary.Text = result.Summary + "\r\n逐项结果见操作记录。";
+            } catch (Exception ex) { ShowError(new IOException(DeleteResult.Reason(ex), ex)); }
+            finally { Busy(false); }
+        }
+
+        void ShowCleanupResult(IWin32Window owner, DeleteResult result, bool reboot = false) {
+            using (var dialog = new Form { Text = "清理结果", Font = Font, ClientSize = new Size(680, 330),
+                StartPosition = FormStartPosition.CenterParent, AutoScaleMode = AutoScaleMode.None, Padding = new Padding(16) }) {
+                var details = new TextBox { Dock = DockStyle.Fill, ReadOnly = true, Multiline = true, ScrollBars = ScrollBars.Vertical,
+                    Text = result.Summary + (result.Canceled ? "\r\n已取消回收。" : "")
+                        + (reboot ? "\r\n请在重启后核对已登记项目的实际处理结果。" : "")
+                        + (result.Failed.Count > 0 ? "\r\n\r\n" + string.Join("\r\n", result.Failed.Take(6)) : "")
+                        + (result.ReportError.Length > 0 ? "\r\n\r\n逐项记录未保存：" + result.ReportError : "") };
+                var bar = Bar(48); bar.Dock = DockStyle.Bottom;
+                var close = Button("关闭", () => dialog.Close());
+                close.DialogResult = DialogResult.Cancel; dialog.CancelButton = close;
+                bar.Controls.Add(close);
+                if (result.ReportPath.Length > 0) bar.Controls.Add(Button("打开逐项记录", () => {
+                    try { Process.Start(new ProcessStartInfo(result.ReportPath) { UseShellExecute = true }); }
+                    catch (Exception ex) { MessageBox.Show(dialog,ex.Message,"无法打开逐项记录"); }
+                }));
+                dialog.Controls.Add(details); dialog.Controls.Add(bar);
+                ApplyTheme(dialog);
+                if (dpiScale != 1) dialog.Scale(new SizeF(dpiScale,dpiScale));
+                dialog.ShowDialog(owner);
+            }
+        }
         bool Confirm(string title,string body,bool typeWord){using(var f=BuildConfirmation(title,body,typeWord))return f.ShowDialog(this)==DialogResult.OK;}
         Form BuildConfirmation(string title,string body,bool typeWord){
             var f=new Form{Text=title,ClientSize=new Size(640,typeWord?430:360),StartPosition=FormStartPosition.CenterParent,Font=Font,AutoScaleMode=AutoScaleMode.None,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,Padding=new Padding(22)};f.SuspendLayout();

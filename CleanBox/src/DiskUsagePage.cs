@@ -14,6 +14,7 @@ namespace CleanBox {
         ChoiceButton usageDrive;
         Label usageSummary, usageLocation, usageDetail;
         Button usageStart, usageFolder, usageUp, usageTop, usageOpen, usageTransfer, usagePrevious, usageNext;
+        Button usageSaveSnapshot, usageCompareSnapshot;
         UsageResult usageResult;
         UsageNode usageCurrent;
         List<UsageNode> usageRows = new List<UsageNode>();
@@ -51,7 +52,9 @@ namespace CleanBox {
             usageTop = Button("大文件 Top 200", () => { if (usageResult == null) return; usageLargest = true; usagePage = 0; RefreshUsageRows(); });
             var rootButton = Button("返回根目录", () => { if (usageResult != null) ShowUsageDirectory(usageResult.Root); });
             var analyzeCurrent = Button("分析此目录", async () => { if (usageCurrent != null && !working) { usageTarget.Text = usageCurrent.Path; await AnalyzeUsage(); } });
-            navigationBar.Controls.AddRange(new Control[] { usageUp, rootButton, usageTop, analyzeCurrent });
+            usageSaveSnapshot = Button("保存为基线", async () => await SaveUsageSnapshot());
+            usageCompareSnapshot = Button("与基线对比", async () => await CompareUsageSnapshot());
+            navigationBar.Controls.AddRange(new Control[] { usageUp, rootButton, usageTop, analyzeCurrent, usageSaveSnapshot, usageCompareSnapshot });
             usageGrid = new SmoothGrid { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
                 AllowUserToResizeRows = false, MultiSelect = false, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 BorderStyle = BorderStyle.None, CellBorderStyle = DataGridViewCellBorderStyle.None, EnableHeadersVisualStyles = false,
@@ -59,7 +62,7 @@ namespace CleanBox {
             usageGrid.Columns.Add("name", "名称 / 双击进入目录"); usageGrid.Columns.Add("size", "已统计大小 ↓"); usageGrid.Columns.Add("kind", "类型 / 状态");
             usageGrid.Columns[0].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             foreach (DataGridViewColumn column in usageGrid.Columns) column.SortMode = DataGridViewColumnSortMode.NotSortable;
-            usageGrid.CellDoubleClick += (s, e) => { var item = SelectedUsage(); if (item != null && item.Directory && !item.Link) ShowUsageDirectory(item); };
+            usageGrid.CellDoubleClick += (s, e) => { var item = SelectedUsage(); if (e.RowIndex >= 0 && item != null && item.Directory && !item.Link) ShowUsageDirectory(item); };
             usageGrid.SelectionChanged += (s, e) => UpdateUsageActions();
             var surface = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(10) }; surface.Controls.Add(usageGrid);
             usageDetail = new Label { Dock = DockStyle.Bottom, Height = 64, AutoEllipsis = true, Tag = "muted", Text = "选择条目查看完整路径与统计范围。" };
@@ -92,6 +95,8 @@ namespace CleanBox {
             usageOpen.Enabled = item != null && !working;
             usageTransfer.Enabled = item != null && !item.Link && !working;
             usageTop.Enabled = usageResult != null && !working;
+            usageSaveSnapshot.Enabled = usageResult != null && !working && !usageResult.Canceled && !usageResult.Limited;
+            usageCompareSnapshot.Enabled = usageResult != null && !working;
             usageUp.Enabled = usageCurrent != null && usageCurrent.Parent != null && !usageLargest;
             usagePrevious.Enabled = usagePage > 0; usageNext.Enabled = (usagePage + 1) * UsagePageSize < usageRows.Count;
             if (item != null) {
@@ -135,6 +140,86 @@ namespace CleanBox {
                 latestStatus = result.Canceled ? "磁盘分析已取消，保留部分结果" : "磁盘占用分析完成";
             } catch (Exception ex) { usageSummary.Text = "本次分析未完成。"; ShowError(ex); }
             finally { Busy(false); cts.Dispose(); cts = null; UpdateUsageActions(); }
+        }
+
+        static string UsageSnapshotDirectory { get { return Path.Combine(Store.Data, "disk-snapshots"); } }
+
+        async Task SaveUsageSnapshot() {
+            if (working || usageResult == null) return;
+            var result = usageResult;
+            if (!Confirm("保存为基线", result.Root.Path + "\r\n\r\n本次扫描将替换此范围已有的基线。下次扫描同一路径后，可选择“与基线对比”。"
+                + (result.Root.Partial ? "\r\n\r\n本次部分目录无法统计，对比时将标出无法确定的变化。" : ""), false)) return;
+            Busy(true);
+            try {
+                await Task.Run(() => DiskSnapshot.Save(UsageSnapshotDirectory, result));
+                latestStatus = "已保存磁盘基线：" + result.Root.Path;
+                Store.Log(latestStatus);
+            } catch (Exception ex) { ShowError(ex); }
+            finally { Busy(false); }
+        }
+
+        async Task CompareUsageSnapshot() {
+            if (working || usageResult == null) return;
+            var current = usageResult;
+            DiskSnapshot previous;
+            Busy(true);
+            try { previous = await Task.Run(() => DiskSnapshot.Load(UsageSnapshotDirectory, current.Root.Path)); }
+            catch (Exception ex) { ShowError(ex); return; }
+            finally { Busy(false); }
+            ShowUsageComparison(previous, current);
+        }
+
+        void ShowUsageComparison(DiskSnapshot previous, UsageResult current) {
+            using (var dialog = new Form { Text = "磁盘占用对比", Font = Font, ClientSize = new Size(850, 540),
+                MinimumSize = new Size(680, 430), StartPosition = FormStartPosition.CenterParent, AutoScaleMode = AutoScaleMode.None, Padding = new Padding(16) }) {
+                var scopes = new Stack<UsageChange>();
+                var changes = new List<UsageChange>();
+                int page = 0;
+                var info = TextLabel("基线 " + previous.ScannedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                    + "    本次 " + current.ScannedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                    + "\r\n按增长量排序。双击目录继续查看。扫描范围不完整时标为“无法确定”。", 64, "muted");
+                var location = TextLabel("", 35, "accent");
+                location.AutoEllipsis = true;
+                var grid = new SmoothGrid { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false,
+                    AllowUserToDeleteRows = false, AllowUserToResizeRows = false, MultiSelect = false, RowHeadersVisible = false,
+                    SelectionMode = DataGridViewSelectionMode.FullRowSelect, BorderStyle = BorderStyle.None, EnableHeadersVisualStyles = false,
+                    BackgroundColor = Palette.Surface, DefaultCellStyle = new DataGridViewCellStyle { BackColor = Palette.Surface, ForeColor = Ink, SelectionBackColor = Palette.Soft, SelectionForeColor = Ink } };
+                grid.Columns.Add("name", "名称"); grid.Columns.Add("baseline", "基线大小"); grid.Columns.Add("current", "本次大小"); grid.Columns.Add("change", "变化");
+                grid.Columns[0].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                foreach (DataGridViewColumn column in grid.Columns) column.SortMode = DataGridViewColumnSortMode.NotSortable;
+                var bar = Bar(48); bar.Dock = DockStyle.Bottom;
+                Button up = null, back = null, next = null;
+                Action render = () => {
+                    grid.Rows.Clear();
+                    foreach (var change in changes.Skip(page * UsagePageSize).Take(UsagePageSize)) {
+                        var row = grid.Rows[grid.Rows.Add(change.Item.Name + (change.HasDirectory ? "\\" : ""), change.BeforeText, change.AfterText, change.ChangeText)];
+                        row.Tag = change; row.Cells[0].ToolTipText = change.Item.Path;
+                    }
+                    grid.ClearSelection();
+                    int pages = Math.Max(1, (changes.Count + UsagePageSize - 1) / UsagePageSize);
+                    var scope = scopes.Peek();
+                    location.Text = scope.Item.Path + " · " + scope.ChangeText + " · 第 " + (page + 1) + "/" + pages + " 页";
+                    up.Enabled = scopes.Count > 1;
+                    back.Enabled = page > 0;
+                    next.Enabled = page + 1 < pages;
+                };
+                Action refresh = () => { changes = scopes.Peek().Children(); page = 0; render(); };
+                up = Button("上一级", () => { if (scopes.Count > 1) { scopes.Pop(); refresh(); } });
+                back = Button("上一页", () => { if (page > 0) { page--; render(); } });
+                next = Button("下一页", () => { page++; render(); });
+                bar.Controls.AddRange(new Control[] { up, back, next });
+                grid.CellDoubleClick += (s, e) => {
+                    if (e.RowIndex < 0) return;
+                    var change = grid.Rows[e.RowIndex].Tag as UsageChange;
+                    if (change != null && change.HasDirectory) { scopes.Push(change); refresh(); }
+                };
+                dialog.Controls.Add(grid); dialog.Controls.Add(bar); dialog.Controls.Add(location); dialog.Controls.Add(info);
+                ApplyTheme(dialog);
+                if (dpiScale != 1) dialog.Scale(new SizeF(dpiScale, dpiScale));
+                scopes.Push(new UsageChange(previous.Root, current.Root));
+                refresh();
+                dialog.ShowDialog(this);
+            }
         }
     }
 }

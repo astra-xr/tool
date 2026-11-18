@@ -31,6 +31,7 @@ namespace CleanBox {
             Reject(()=>Safety.Check(Path.Combine(Path.GetPathRoot(Environment.SystemDirectory),"pagefile.sys")),"System paging file protected");
             VerifyV243(root);
             VerifyV244(root);
+            VerifyV250(root);
             string linkHolder=Path.Combine(root,"link-holder"),destination=Path.Combine(root,"sentinel"),junction=Path.Combine(linkHolder,"jump");Directory.CreateDirectory(linkHolder);Directory.CreateDirectory(destination);File.WriteAllText(Path.Combine(destination,"keep.txt"),"must survive link rejection");
             Store.RunPowerShell("New-Item -ItemType Junction -Path "+Store.QuotePS(junction)+" -Target "+Store.QuotePS(destination)+" | Out-Null",CancellationToken.None);
             File.WriteAllBytes(Path.Combine(linkHolder,"local.bin"),new byte[4096]);
@@ -159,6 +160,52 @@ namespace CleanBox {
             Check(normalized == driveRoot && CatalogClassification.Drive(new AppEntry { Path = normalized }) == driveRoot
                 && MainForm.PathArgument(normalized) == driveRoot, "A registered drive root remains absolute through the disk filter and Explorer argument");
             Check(Scanner.CleanPath(root + "\\") == root, "Catalog path cleanup still trims the trailing separator of a normal directory");
+        }
+        internal static void VerifyV250(string root) {
+            string scan = Path.Combine(root, "snapshot-source"), history = Path.Combine(root, "snapshots");
+            string growth = Path.Combine(scan, "growing");
+            Directory.CreateDirectory(growth);
+            string changed = Path.Combine(growth, "changed.bin"), removed = Path.Combine(scan, "removed.bin");
+            File.WriteAllBytes(changed, new byte[4]);
+            File.WriteAllBytes(removed, new byte[16]);
+            var baseline = DiskUsage.Scan(scan, CancellationToken.None, null);
+            DiskSnapshot.Save(history, baseline);
+            var snapshot = DiskSnapshot.Load(history, scan);
+            Check(snapshot.Root.Bytes == 20 && snapshot.Root.ListingComplete && snapshot.ScannedUtc == baseline.ScannedUtc,
+                "A disk snapshot retains its tree, totals and scan time on disk");
+            File.WriteAllBytes(changed, new byte[32]);
+            File.Delete(removed);
+            File.WriteAllBytes(Path.Combine(scan, "new.bin"), new byte[9]);
+            var current = DiskUsage.Scan(scan, CancellationToken.None, null);
+            var changes = new UsageChange(snapshot.Root, current.Root).Children();
+            Check(changes.Select(row => row.Delta).SequenceEqual(new long?[] { 28, 9, -16 })
+                && changes[0].Children().Single().Delta == 28,
+                "Disk comparison sorts changes and can drill into growing folders");
+            var partial = DiskUsage.Scan(scan, CancellationToken.None, null, 1);
+            Check(new UsageChange(snapshot.Root, partial.Root).Children().All(row => !row.Delta.HasValue),
+                "Entries missing from an incomplete listing do not appear as removals");
+            Reject(() => DiskSnapshot.Save(history, partial), "An entry-limited scan cannot replace the baseline");
+            DiskSnapshot.Save(history, current);
+            Check(DiskSnapshot.Load(history, scan).Root.Bytes == 41, "Saving a new scan replaces the baseline for that exact path");
+
+            string cleanup = Path.Combine(root, "cleanup-preview"), nested = Path.Combine(cleanup, "nested");
+            Directory.CreateDirectory(nested);
+            string sample = Path.Combine(nested, "sample.bin");
+            File.WriteAllBytes(sample, new byte[13]);
+            var plan = CleanupPlan.Capture(cleanup, CancellationToken.None, true);
+            Check(plan.Files == 1 && plan.Directories == 2 && plan.Bytes == 13 && plan.Preview.Contains(cleanup),
+                "Cleanup preview includes the full path, file and directory counts, and total bytes");
+            File.WriteAllBytes(sample, new byte[17]);
+            Reject(() => Operations.Permanent(plan), "The approved cleanup stops when the target changes");
+            var deletion = Operations.Permanent(CleanupPlan.Capture(cleanup, CancellationToken.None, true));
+            Check(deletion.Done == 3 && deletion.Failed.Count == 0 && File.ReadAllText(deletion.ReportPath).Contains(sample) && !Directory.Exists(cleanup),
+                "Cleanup stores a per-item report for the approved fixture");
+            Check(DeleteResult.Reason(new System.ComponentModel.Win32Exception(32)).StartsWith("文件被占用")
+                && DeleteResult.Reason(new System.ComponentModel.Win32Exception(5)).StartsWith("权限不足"),
+                "Cleanup errors separate sharing violations from permission errors");
+
+            var sizes = Native.FindLocks(changed, CancellationToken.None);
+            Check(sizes.SizeBytes == 32 && sizes.Files == 1, "The lock page keeps the measured file size when Windows occupancy detection is unavailable");
         }
         public static void ScanReport(){Directory.CreateDirectory(Store.Data);var apps=new List<AppEntry>();var messages=new List<string>();
             try{Scanner.Registered(apps.Add,messages.Add,CancellationToken.None);Scanner.Packages(apps.Add,messages.Add,CancellationToken.None);Scanner.Shortcuts(apps.Add,messages.Add,CancellationToken.None);
