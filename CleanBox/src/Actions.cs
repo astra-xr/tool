@@ -23,7 +23,22 @@ namespace CleanBox {
             var info=new Label{Dock=DockStyle.Top,Height=118,Padding=new Padding(15),Text="递归查找所选磁盘中的 EXE，补充未登记的软件。\r\n可能需要几分钟，可随时取消并保留结果。\r\n跳过系统保护区、无权限目录、链接及常见开发依赖目录；发现项需人工核对，不保证百分之百识别。"};
             var go=new Button{Text="开始只读扫描",Dock=DockStyle.Bottom,Height=44,DialogResult=DialogResult.OK};f.Controls.Add(list);f.Controls.Add(info);f.Controls.Add(go);ApplyTheme(f);if(f.ShowDialog(this)!=DialogResult.OK)return;string[] roots=list.CheckedItems.Cast<string>().ToArray();if(roots.Length==0)return;await RunScan(t=>{foreach(string root in roots)Scanner.Disk(root,queue.Enqueue,s=>latestStatus=s,t);},"磁盘扫描完成（跳过项和限制请见说明）");}}
         void OpenSelected(){var a=Selected();if(a!=null)OpenPath(a.Path.Length>0?a.Path:a.Executable);}
-        void OpenPath(string p){try{if(File.Exists(p)||Directory.Exists(p)){Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"explorer.exe"),(File.Exists(p)?"/select,":"")+"\""+p.TrimEnd('\\')+"\""){UseShellExecute=true});}else MessageBox.Show(this,"路径不存在或未提供。","打开位置");}catch(Exception e){ShowError(e);}}
+        void OpenPath(string path) {
+            try {
+                bool isFile = File.Exists(path);
+                if (!isFile && !Directory.Exists(path)) {
+                    MessageBox.Show(this,"路径不存在或未提供。","打开位置");
+                    return;
+                }
+                string target = path.TrimEnd('\\','/');
+                if (target.Length == 2 && target[1] == ':' && path.Length > 2) target += "\\";
+                string explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),"explorer.exe");
+                Process.Start(new ProcessStartInfo(explorer,(isFile ? "/select," : "") + PathArgument(target)) { UseShellExecute=true });
+            } catch(Exception e) { ShowError(e); }
+        }
+        internal static string PathArgument(string path) {
+            return path.Length == 3 && path[1] == ':' && path[2] == '\\' ? path : "\"" + path + "\"";
+        }
         void UseSelectedFolder(){var a=Selected();if(a==null)return;if(a.Path.Length==0){MessageBox.Show(this,"该条目没有提供安装目录，请手动选择目标。","清理匣");return;}pathBox.Text=a.Path;SwitchPage(1);}
         async Task UninstallSelected(){if(!Idle())return;var a=Selected();if(a==null)return;if(a.Protected){MessageBox.Show(this,"此项是系统组件，本工具不执行卸载。","受保护项目");return;}
             if(!Confirm("正常卸载",a.Name+"\r\n\r\n"+(a.Package.Length>0?"仅卸载当前用户的软件包：\r\n"+a.Package:"即将启动软件登记的卸载程序：\r\n"+a.Command),false))return;
@@ -80,7 +95,7 @@ namespace CleanBox {
             f.Controls.Add(target);if(typeWord){var entry=new Panel{Dock=DockStyle.Bottom,Height=64,Padding=new Padding(0,5,0,0)};var label=new Label{Text="输入“确认”以继续",Dock=DockStyle.Top,Height=27,Tag="muted"};var word=new TextBox{Name="confirmationWord",Dock=DockStyle.Top};word.TextChanged+=(s,e)=>yes.Enabled=word.Text=="确认";entry.Controls.Add(word);entry.Controls.Add(label);f.Controls.Add(entry);}
             f.Controls.Add(bottom);f.Controls.Add(heading);ApplyTheme(f);if(dpiScale!=1)f.Scale(new SizeF(dpiScale,dpiScale));f.ResumeLayout(true);f.Shown+=(s,e)=>no.Focus();return f;
         }
-        void Elevate(){if(!Idle())return;try{string target=string.IsNullOrWhiteSpace(pathBox.Text)?"":Safety.Normalize(pathBox.Text);Process.Start(new ProcessStartInfo(Application.ExecutablePath,target.Length>0?"--target \""+target+"\"":""){UseShellExecute=true,Verb="runas",WorkingDirectory=Store.Home});Close();}catch(Exception e){ShowError(e);}}
+        void Elevate(){if(!Idle())return;try{string target=string.IsNullOrWhiteSpace(pathBox.Text)?"":Safety.Normalize(pathBox.Text);Process.Start(new ProcessStartInfo(Application.ExecutablePath,target.Length>0?"--target "+PathArgument(target):""){UseShellExecute=true,Verb="runas",WorkingDirectory=Store.Home});Close();}catch(Exception e){ShowError(e);}}
         void ShowError(Exception e){latestStatus=e.Message;Store.Log("操作未完成："+e.Message);MessageBox.Show(this,e.Message,"操作未完成",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
     }
 }

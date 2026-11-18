@@ -24,8 +24,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Build CleanBox and the portable package
+        run: |
+          ./build.ps1
+          ./tools/package.ps1
       - name: Build the installation wizard
-        run: ./tools/build-installer.ps1
+        run: ./tools/build-installer.ps1 -ArchivePath './release/CleanBox-Windows-x64.zip'
       - name: Check installation, shortcuts, reinstall and uninstall
         run: |
           $installDir = Join-Path $env:RUNNER_TEMP 'CleanBox Installer Test'
@@ -39,8 +43,8 @@ jobs:
           Invoke-TestProcess $setup $setupArgs
 
           $app = Join-Path $installDir 'CleanBox.exe'
-          if ($env:RELEASE_BUILD -eq 'true' -and (Get-Item -LiteralPath $app).VersionInfo.FileVersion.Trim() -ne '2.4.2.0') {
-              throw 'The installer must contain CleanBox 2.4.2.'
+          if ($env:RELEASE_BUILD -eq 'true' -and (Get-Item -LiteralPath $app).VersionInfo.FileVersion.Trim() -ne '2.4.3.0') {
+              throw 'The installer must contain CleanBox 2.4.3.'
           }
           $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'CleanBox/CleanBox.lnk'
           $desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'CleanBox.lnk'
@@ -91,7 +95,7 @@ jobs:
           }
 
           $portable = Join-Path $env:RUNNER_TEMP 'CleanBox Portable Reference'
-          Expand-Archive -LiteralPath 'downloads/CleanBox-Windows-x64.zip' -DestinationPath $portable
+          Expand-Archive -LiteralPath 'release/CleanBox-Windows-x64.zip' -DestinationPath $portable
           $expected = (Get-FileHash -LiteralPath (Join-Path $portable 'CleanBox/CleanBox.exe')).Hash
           if ((Get-FileHash -LiteralPath $app).Hash -ne $expected) {
               throw 'The installed app differs from the portable release.'
@@ -121,17 +125,19 @@ jobs:
           }
           Write-Output 'Installer lifecycle, embedded icons, desktop and Start menu shortcut checks passed.'
         env:
-          RELEASE_BUILD: ${{ github.event.head_commit.message == 'Publish CleanBox 2.4.2' }}
+          RELEASE_BUILD: ${{ github.event.head_commit.message == 'Publish CleanBox 2.4.3' }}
       - uses: actions/upload-artifact@v4
         with:
-          name: CleanBox-Setup-Windows-x64
+          name: CleanBox-Release-Windows-x64
           path: |
             CleanBox/release/CleanBox-Setup-Windows-x64.exe
             CleanBox/release/CleanBox-Setup-Windows-x64.exe.sha256
+            CleanBox/release/CleanBox-Windows-x64.zip
+            CleanBox/release/CleanBox-Windows-x64.zip.sha256
           if-no-files-found: error
 
   publish:
-    if: github.event.head_commit.message == 'Publish CleanBox 2.4.2'
+    if: github.event.head_commit.message == 'Publish CleanBox 2.4.3'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -142,7 +148,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: CleanBox-Setup-Windows-x64
+          name: CleanBox-Release-Windows-x64
           path: release-assets
       - name: Publish the verified installation and portable packages
         env:
@@ -150,16 +156,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          cp CleanBox/downloads/CleanBox-Windows-x64.zip{,.sha256} release-assets/
           cd release-assets
           sha256sum --check CleanBox-Setup-Windows-x64.exe.sha256
           sha256sum --check CleanBox-Windows-x64.zip.sha256
 
           cat > "$RUNNER_TEMP/cleanbox-notes.md" <<'EOF'
-          - 启用全新青绿玻璃「晶环」图标，统一程序、窗口、安装包与系统卸载列表。
-          - 安装后的桌面和开始菜单快捷方式明确使用新图标文件；覆盖安装会更新旧快捷方式并通知 Windows 刷新图标显示。
-          - 图标包含 16–256 像素共 10 种尺寸，兼容 .NET Framework 和不同显示缩放。
-          - 保留磁盘占用分析、残留核对续办、软件大小实测与圆角流光进度条等功能。
+          - 回收卸载残留前重新核对安装登记和路径归属，发现仍有软件使用时停止回收。
+          - 清理失效记录时确认安装位置及卸载入口，备份前后分别核对记录。
+          - 修正文件解锁页的盘符根目录解析，以及磁盘发现的扩展名与依赖目录误报。
 
           **Windows x64 安装版**：下载 `CleanBox-Setup-Windows-x64.exe`，双击后按向导安装。需要桌面入口时，勾选「创建桌面快捷方式」。
 
@@ -167,8 +171,8 @@ jobs:
 
           两个下载包均附 SHA-256 校验文件。
           EOF
-          gh release create cleanbox-v2.4.2 \
+          gh release create cleanbox-v2.4.3 \
             CleanBox-Setup-Windows-x64.exe CleanBox-Setup-Windows-x64.exe.sha256 \
             CleanBox-Windows-x64.zip CleanBox-Windows-x64.zip.sha256 \
-            --target "$GITHUB_SHA" --title 'CleanBox 2.4.2' \
+            --target "$GITHUB_SHA" --title 'CleanBox 2.4.3' \
             --notes-file "$RUNNER_TEMP/cleanbox-notes.md" --latest

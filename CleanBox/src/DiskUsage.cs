@@ -23,7 +23,6 @@ namespace CleanBox {
     internal static class DiskUsage {
         internal static UsageResult Scan(string input, CancellationToken token, Action<string> progress, int maxEntries = 300000) {
             string path = Safety.Normalize(input);
-            if (path.Length == 2) path += "\\";
             var drive = new DriveInfo(System.IO.Path.GetPathRoot(path));
             if (drive.DriveType != DriveType.Fixed) throw new IOException("请选择本机固定磁盘上的文件夹。");
             if (!System.IO.Directory.Exists(path) || Safety.HasReparseAncestor(path)) throw new IOException("目录不存在、无法访问或经过目录链接。");

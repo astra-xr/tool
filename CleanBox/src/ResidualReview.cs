@@ -28,7 +28,7 @@ namespace CleanBox {
                     return count == "0" ? RegistrationState.Missing : count == "1" ? RegistrationState.Present : RegistrationState.Unknown;
                 }
                 if (app.RegistryPath.Length == 0) return RegistrationState.Unregistered;
-                if (!app.RegistryPath.StartsWith(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\", StringComparison.OrdinalIgnoreCase)) return RegistrationState.Unknown;
+                if (!app.RegistryPath.StartsWith(Scanner.Uninstall + "\\", StringComparison.OrdinalIgnoreCase)) return RegistrationState.Unknown;
                 using (var hive = RegistryKey.OpenBaseKey(app.Hive, app.View))
                 using (var key = hive.OpenSubKey(app.RegistryPath))
                     return key == null ? RegistrationState.Missing : RegistrationState.Present;
@@ -43,6 +43,37 @@ namespace CleanBox {
                 case RegistrationState.Unregistered: return "该项未登记卸载信息，请核对候选路径是否确实属于此软件。";
                 default: return "暂时无法核实安装登记，未将此项标记为已卸载。";
             }
+        }
+
+        internal static void EnsureCanRecycle(AppEntry app, string path, CancellationToken token) {
+            var state = Probe(app, token);
+            if (state == RegistrationState.Present || state == RegistrationState.Unknown)
+                throw new IOException(Describe(state));
+
+            AppEntry owner = null;
+            Action<AppEntry> check = current => {
+                if (owner == null && UsesResidualLocation(app, path, current)) owner = current;
+            };
+            try {
+                Scanner.Registered(check, null, token, true);
+                if (owner == null && app.Package.Length > 0) Scanner.Packages(check, s => { }, token);
+            } catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { throw new IOException("无法核实现有软件的安装记录，本次未回收。", ex); }
+
+            if (owner != null) throw new IOException("当前安装的软件仍可能使用此位置：" + owner.Name);
+            token.ThrowIfCancellationRequested();
+        }
+
+        internal static bool UsesResidualLocation(AppEntry original, string candidate, AppEntry current) {
+            if (original.Name.Length > 0 && original.Name.Equals(current.Name, StringComparison.OrdinalIgnoreCase)) return true;
+            if (OverlapsInstallation(candidate, current.Path) || OverlapsInstallation(candidate, current.Executable)) return true;
+            return original.Path.Length > 3 && !Safety.IsSharedDirectory(original.Path)
+                && (OverlapsInstallation(original.Path, current.Path) || OverlapsInstallation(original.Path, current.Executable));
+        }
+
+        static bool OverlapsInstallation(string candidate, string installed) {
+            return installed.Length > 3 && (Safety.Within(installed, candidate)
+                || Safety.Within(candidate, installed) && !Safety.IsSharedDirectory(installed));
         }
 
         internal static List<ResidualCandidate> Find(AppEntry app, CancellationToken token, IEnumerable<string> configRoots = null, bool test = false) {
@@ -189,7 +220,12 @@ namespace CleanBox {
                     using (var confirmation = BuildConfirmation("移到回收站", item.Path + "\r\n\r\n" + item.DisplaySize + "（当前统计，可能变化）\r\n发现依据：" + item.Evidence + "\r\n\r\n将处理该目标及其全部内容。配置目录可能含个人数据，请确认归属及保留需要。Windows 若提示无法回收，可取消。", false))
                         if (confirmation.ShowDialog(f) != DialogResult.OK) return;
                     running = true; refresh.Enabled = false; selectionChanged();
-                    try { await RecycleInBackground(item.Path); note.Text = "已完成回收站操作。"; }
+                    try {
+                        var token = cancellation.Token;
+                        await RecycleInBackground(item.Path, () => ResidualReview.EnsureCanRecycle(app, item.Path, token));
+                        note.Text = "已完成回收站操作。";
+                    }
+                    catch (OperationCanceledException) { note.Text = "已取消本次回收。"; }
                     catch (Exception ex) { MessageBox.Show(f, ex.Message, "未能完成回收"); }
                     finally { running = false; refresh.Enabled = true; }
                     if (closeRequested) f.Close(); else await load();
@@ -211,9 +247,9 @@ namespace CleanBox {
         }
 
         // The shell recycle UI requires an STA thread; directory preflight must not freeze the main window.
-        static Task RecycleInBackground(string path) {
+        static Task RecycleInBackground(string path, Action beforeRecycle = null) {
             var completion = new TaskCompletionSource<bool>();
-            var thread = new Thread(() => { try { Operations.Recycle(path); completion.SetResult(true); } catch (Exception ex) { completion.SetException(ex); } });
+            var thread = new Thread(() => { try { Operations.Recycle(path, beforeRecycle); completion.SetResult(true); } catch (Exception ex) { completion.SetException(ex); } });
             thread.IsBackground = true; thread.SetApartmentState(ApartmentState.STA); thread.Start(); return completion.Task;
         }
     }

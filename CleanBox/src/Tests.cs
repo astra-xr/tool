@@ -29,6 +29,7 @@ namespace CleanBox {
             Check(!Scanner.ParseCommand("https://example.com/remove",out exe,out arg),"Non-program uninstall string rejected");
             Check(Store.QuotePS("a'b")=="'a''b'","PowerShell literal quoting preserves apostrophes");
             Reject(()=>Safety.Check(Path.Combine(Path.GetPathRoot(Environment.SystemDirectory),"pagefile.sys")),"System paging file protected");
+            VerifyV243(root);
             string linkHolder=Path.Combine(root,"link-holder"),destination=Path.Combine(root,"sentinel"),junction=Path.Combine(linkHolder,"jump");Directory.CreateDirectory(linkHolder);Directory.CreateDirectory(destination);File.WriteAllText(Path.Combine(destination,"keep.txt"),"must survive link rejection");
             Store.RunPowerShell("New-Item -ItemType Junction -Path "+Store.QuotePS(junction)+" -Target "+Store.QuotePS(destination)+" | Out-Null",CancellationToken.None);
             File.WriteAllBytes(Path.Combine(linkHolder,"local.bin"),new byte[4096]);
@@ -86,6 +87,41 @@ namespace CleanBox {
             var clean=Operations.Permanent(root,true);Check(clean.Failed.Count==0&&!Directory.Exists(root),"Only test fixture removed after verification");
             results.Add("No installed software, user data, reboot queue or registry entries were modified.");
             File.WriteAllLines(Path.Combine(Store.Data,"test-results.txt"),results,new UTF8Encoding(true));
+        }
+        internal static void VerifyV243(string root) {
+            string driveRoot=Path.GetPathRoot(root);
+            Check(Safety.Normalize(driveRoot)==driveRoot&&Safety.Normalize(driveRoot.Replace('\\','/'))==driveRoot,
+                "Drive-root normalization retains the absolute root in both slash styles");
+            Check(MainForm.PathArgument(driveRoot)==driveRoot&&MainForm.PathArgument(Path.Combine(root,"With spaces"))=="\""+Path.Combine(root,"With spaces")+"\"",
+                "Explorer and relaunch receive an absolute root and quoted paths with spaces");
+
+            string scan=Path.Combine(root,"extension-fixture"), dependencies=Path.Combine(scan,"Node_Modules");
+            Directory.CreateDirectory(dependencies);
+            File.WriteAllText(Path.Combine(scan,"portable.EXE"),"fixture");
+            File.WriteAllText(Path.Combine(scan,"not-an-executable.exex"),"fixture");
+            File.WriteAllText(Path.Combine(dependencies,"helper.exe"),"fixture");
+            var files=Scanner.WalkFiles(scan,"*.exe",CancellationToken.None,null).Select(Path.GetFileName).ToArray();
+            Check(files.SequenceEqual(new[]{"portable.EXE"}),"EXE discovery checks the exact extension and excludes dependencies regardless of case");
+
+            string missing=Path.Combine(root,"already-removed"), uninstaller=Path.Combine(missing,"uninstall.exe");
+            Operations.EnsureStalePaths(missing,missing,"\""+uninstaller+"\" /remove","");
+            Check(true,"A missing verified install location and uninstall executable allow stale cleanup");
+            Reject(()=>Operations.EnsureStalePaths(missing,missing,"MsiExec /I{00000000-0000-0000-0000-000000000000}",""),"An unrecognized installer command cannot authorize registry cleanup");
+            Reject(()=>Operations.EnsureStalePaths(missing,missing,"","\""+Path.Combine(scan,"portable.EXE")+"\" /quiet"),"An existing quiet uninstaller protects the registration");
+            Reject(()=>Operations.EnsureStalePaths(scan,"","",""),"An existing install location protects the registration");
+            Reject(()=>Operations.EnsureStalePaths("","","",""),"Missing evidence cannot authorize registry cleanup");
+
+            var original=new AppEntry { Name="Removed app", Path=Path.Combine(root,"app") };
+            string residual=Path.Combine(root,"settings");
+            Check(ResidualReview.UsesResidualLocation(original,residual,new AppEntry { Name="Updated app", Path=Path.Combine(original.Path,"bin") }),
+                "A replacement registration using the previous install directory protects its related residual");
+            Check(ResidualReview.UsesResidualLocation(original,residual,new AppEntry { Name="Other app", Executable=Path.Combine(residual,"app.exe") }),
+                "An active executable inside a residual prevents its recycling");
+            Check(ResidualReview.UsesResidualLocation(original,residual,new AppEntry { Name="removed app", Path=Path.Combine(root,"new-app") }),
+                "A reinstallation under the same name protects its settings even if its install path changes");
+            Check(!ResidualReview.UsesResidualLocation(original,residual,new AppEntry { Name="Other app", Path=original.Path+"-other" }),
+                "An unrelated registration with a similar path prefix does not block recycling");
+            Reject(()=>ResidualReview.EnsureCanRecycle(new AppEntry { RegistryPath="invalid" },residual,CancellationToken.None),"Recycling refuses a registration that cannot be verified");
         }
         public static void ScanReport(){Directory.CreateDirectory(Store.Data);var apps=new List<AppEntry>();var messages=new List<string>();
             try{Scanner.Registered(apps.Add,messages.Add,CancellationToken.None);Scanner.Packages(apps.Add,messages.Add,CancellationToken.None);Scanner.Shortcuts(apps.Add,messages.Add,CancellationToken.None);

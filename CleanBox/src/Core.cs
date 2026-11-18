@@ -114,37 +114,45 @@ namespace CleanBox {
         }
     }
     public static class Scanner {
-        const string Uninstall = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+        internal const string Uninstall = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+        static readonly HashSet<string> ExcludedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            ".git", "node_modules", ".venv", "__pycache__", "$RECYCLE.BIN", "System Volume Information"
+        };
         public static void Registered(Action<AppEntry> add, Action<string> status, CancellationToken token) {
-            var sizes=new InstalledSizeLookup();
+            Registered(add, status, token, false);
+        }
+        internal static void Registered(Action<AppEntry> add, Action<string> status, CancellationToken token, bool verifyOnly) {
+            var sizes=verifyOnly ? null : new InstalledSizeLookup();
             foreach(var hive in new[]{RegistryHive.LocalMachine,RegistryHive.CurrentUser}) foreach(var view in new[]{RegistryView.Registry64,RegistryView.Registry32}) {
-                token.ThrowIfCancellationRequested(); status("读取 " + hive + " · " + view);
+                token.ThrowIfCancellationRequested(); if(status!=null) status("读取 " + hive + " · " + view);
                 try { using(var b=RegistryKey.OpenBaseKey(hive,view)) using(var root=b.OpenSubKey(Uninstall)) {
                     if(root==null) continue;
                     foreach(var key in root.GetSubKeyNames()) { token.ThrowIfCancellationRequested(); try { using(var k=root.OpenSubKey(key)) {
                         if(k==null) continue; string name=V(k,"DisplayName"); if(string.IsNullOrWhiteSpace(name)) continue;
                         var a=new AppEntry{Name=name,Version=V(k,"DisplayVersion"),Publisher=V(k,"Publisher"),Source=(hive==RegistryHive.LocalMachine?"已安装 · 全机":"已安装 · 当前用户")+(view==RegistryView.Registry64?" · 64位":" · 32位"),Command=V(k,"UninstallString"),Hive=hive,View=view,RegistryPath=Uninstall+"\\"+key,Protected=V(k,"SystemComponent")=="1"};
-                        a.SizeBytes=FileSizes.FromEstimatedKilobytes(k.GetValue("EstimatedSize"));
-                        a.SizeKind=AppSizeKind.RegisteredEstimate;
                         string installLocation=V(k,"InstallLocation");
                         a.InstallLocation=installLocation;
                         a.Path=CleanPath(installLocation); a.Executable=IconPath(V(k,"DisplayIcon"));
                         if(a.Path.Length==0 && File.Exists(a.Executable)) a.Path=System.IO.Path.GetDirectoryName(a.Executable);
                         if(a.Path.Length==0) { string exe,args; if(ParseCommand(a.Command,out exe,out args) && System.IO.Path.IsPathRooted(exe) && File.Exists(exe)) a.Path=System.IO.Path.GetDirectoryName(exe); }
-                        if(!a.SizeBytes.HasValue&&!a.Protected) {
-                            try { sizes.Fill(a,installLocation,token); }
-                            catch(IOException) { a.SizeNote="目录不可访问或路径无效。"; }
-                            catch(UnauthorizedAccessException) { a.SizeNote="没有读取安装目录的权限。"; }
-                            catch(System.Security.SecurityException) { a.SizeNote="系统限制了安装目录的读取权限。"; }
+                        if(!verifyOnly) {
+                            a.SizeBytes=FileSizes.FromEstimatedKilobytes(k.GetValue("EstimatedSize"));
+                            a.SizeKind=AppSizeKind.RegisteredEstimate;
+                            if(!a.SizeBytes.HasValue&&!a.Protected) {
+                                try { sizes.Fill(a,installLocation,token); }
+                                catch(IOException) { a.SizeNote="目录不可访问或路径无效。"; }
+                                catch(UnauthorizedAccessException) { a.SizeNote="没有读取安装目录的权限。"; }
+                                catch(System.Security.SecurityException) { a.SizeNote="系统限制了安装目录的读取权限。"; }
+                            }
                         }
                         add(a);
-                    }} catch(OperationCanceledException) { throw; } catch(Exception e) { Store.Log("跳过安装记录 " + key + "："+e.Message); } }
-                }} catch(OperationCanceledException) { throw; } catch(Exception e) { Store.Log("注册表读取失败："+e.Message); }
+                    }} catch(OperationCanceledException) { throw; } catch(Exception e) { if(verifyOnly) throw; Store.Log("跳过安装记录 " + key + "："+e.Message); } }
+                }} catch(OperationCanceledException) { throw; } catch(Exception e) { if(verifyOnly) throw; Store.Log("注册表读取失败："+e.Message); }
             }
         }
-        static string V(RegistryKey k,string name) { return Convert.ToString(k.GetValue(name,"")); }
+        internal static string V(RegistryKey k,string name) { return Convert.ToString(k.GetValue(name,"")); }
         public static string CleanPath(string p) { try { p=Environment.ExpandEnvironmentVariables((p??"").Trim().Trim('"')); return string.IsNullOrWhiteSpace(p)?"":System.IO.Path.GetFullPath(p).TrimEnd('\\'); } catch { return ""; } }
-        static string IconPath(string p) { return CleanPath(Regex.Replace(p??"",@",\s*-?\d+\s*$", "")); }
+        internal static string IconPath(string p) { return CleanPath(Regex.Replace(p??"",@",\s*-?\d+\s*$", "")); }
         public static bool ParseCommand(string command,out string exe,out string args) {
             exe="";args=""; string s=Environment.ExpandEnvironmentVariables((command??"").Trim());
             if(s.StartsWith("\"")) { int end=s.IndexOf('"',1); if(end<2) return false; exe=s.Substring(1,end-1);args=s.Substring(end+1).Trim(); }
@@ -178,6 +186,8 @@ namespace CleanBox {
             return a;
         }
         public static IEnumerable<string> WalkFiles(string root,string pattern,CancellationToken token,Action<string> status,int maxDepth=int.MaxValue) {
+            // Framework wildcard matching can include longer extensions for patterns such as *.exe.
+            string extension=Regex.IsMatch(pattern,@"^\*\.[A-Za-z0-9]+$")?pattern.Substring(1):null;
             var pending=new Stack<Tuple<string,int>>(); pending.Push(Tuple.Create(root,0));
             while(pending.Count>0) { token.ThrowIfCancellationRequested(); var node=pending.Pop(); string dir=node.Item1;
                 string[] files=new string[0],dirs=new string[0];
@@ -185,8 +195,11 @@ namespace CleanBox {
                 catch(UnauthorizedAccessException) { if(status!=null) status("无权限，已跳过："+dir); Store.Log("扫描跳过（无权限）："+dir); continue; }
                 catch(IOException e) { Store.Log("扫描跳过："+dir+"；"+e.Message); continue; }
                 if(status!=null) status("扫描："+dir);
-                foreach(var f in files) { token.ThrowIfCancellationRequested(); yield return f; }
-                foreach(var d in dirs) { string n=System.IO.Path.GetFileName(d); if(n==".git"||n=="node_modules"||n==".venv"||n=="__pycache__"||n=="$RECYCLE.BIN"||n=="System Volume Information") continue; pending.Push(Tuple.Create(d,node.Item2+1)); }
+                foreach(var f in files) {
+                    token.ThrowIfCancellationRequested();
+                    if(extension==null||string.Equals(System.IO.Path.GetExtension(f),extension,StringComparison.OrdinalIgnoreCase)) yield return f;
+                }
+                foreach(var d in dirs) if(!ExcludedDirectories.Contains(System.IO.Path.GetFileName(d))) pending.Push(Tuple.Create(d,node.Item2+1));
             }
         }
         public static void Disk(string root,Action<AppEntry> add,Action<string> status,CancellationToken token) {
@@ -203,7 +216,8 @@ namespace CleanBox {
             if(string.IsNullOrWhiteSpace(p)||!Regex.IsMatch(p,@"^[A-Za-z]:[\\/]")) throw new IOException("请选择本机磁盘上的绝对路径。");
             if(p.Substring(2).Contains(":")) throw new IOException("不支持设备路径或文件数据流。");
             foreach(var part in p.Replace('/','\\').Substring(2).Split('\\')) if(part.EndsWith(".")||part.EndsWith(" ")||Regex.IsMatch(part,@"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)",RegexOptions.IgnoreCase)) throw new IOException("路径包含不明确或保留的名称，无法安全处理。");
-            string n=System.IO.Path.GetFullPath(p).TrimEnd('\\');
+            string n=System.IO.Path.GetFullPath(p);
+            if(n.Length>3)n=n.TrimEnd('\\');
             foreach(var part in n.Substring(2).Split('\\')) if(part.EndsWith(".")||part.EndsWith(" ")) throw new IOException("路径尾部有空格或点，无法安全处理。");
             return n;
         }
@@ -261,8 +275,10 @@ namespace CleanBox {
             }
             Store.Log("重启删除登记 "+root+"；"+r.Summary);return r;
         }
-        public static void Recycle(string root) {
+        public static void Recycle(string root) { Recycle(root,null); }
+        internal static void Recycle(string root,Action beforeRecycle) {
             root=Safety.Check(root);Safety.Plan(root); // Preflight rejects links and inaccessible subtrees before handing to the shell.
+            if(beforeRecycle!=null) { beforeRecycle(); Safety.Check(root); }
             if(Directory.Exists(root)) Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(root,Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
             else Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(root,Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
             Store.Log("移至回收站："+root);
@@ -284,22 +300,61 @@ namespace CleanBox {
             return paths.OrderBy(x=>x).ToList();
         }
         public static void RemoveStaleRecord(AppEntry a) {
-            if(a.RegistryPath.Length==0||!a.RegistryPath.StartsWith(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\",StringComparison.OrdinalIgnoreCase)) throw new IOException("不是可清理的卸载记录。");
+            string prefix=Scanner.Uninstall+"\\";
+            if(!a.RegistryPath.StartsWith(prefix,StringComparison.OrdinalIgnoreCase)||a.RegistryPath.Length==prefix.Length
+                ||a.RegistryPath.IndexOfAny(new[]{'\\','"'},prefix.Length)>=0||(a.Hive!=RegistryHive.LocalMachine&&a.Hive!=RegistryHive.CurrentUser)
+                ||(a.View!=RegistryView.Registry64&&a.View!=RegistryView.Registry32)) throw new IOException("不是可清理的卸载记录。");
             if(a.Protected) throw new IOException("不能清理系统组件记录。");
-            if(a.Path.Length>0&&Directory.Exists(a.Path)) throw new IOException("安装目录仍然存在，请先正常卸载并核对。");
-            string exe,args; if(Scanner.ParseCommand(a.Command,out exe,out args)) { if(System.IO.Path.GetFileName(exe).Equals("msiexec.exe",StringComparison.OrdinalIgnoreCase)) throw new IOException("MSI 记录应由 Windows Installer 管理。");if(!System.IO.Path.IsPathRooted(exe)||File.Exists(exe))throw new IOException("卸载程序可能仍然有效，不能作为失效记录删除。"); }
-            Directory.CreateDirectory(Store.Data); string backup=System.IO.Path.Combine(Store.Data,"registry-backup-"+DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")+".reg");
-            string root=a.Hive==RegistryHive.LocalMachine?"HKLM":"HKCU";
-            var psi=new ProcessStartInfo(System.IO.Path.Combine(Environment.SystemDirectory,"reg.exe"),"export \""+root+"\\"+a.RegistryPath+"\" \""+backup+"\" /y /reg:"+(a.View==RegistryView.Registry64?"64":"32")){UseShellExecute=false,CreateNoWindow=true};
-            using(var p=Process.Start(psi)){p.WaitForExit();if(p.ExitCode!=0||!File.Exists(backup))throw new IOException("注册表备份失败，未删除记录。");}
+            string backup=System.IO.Path.Combine(Store.Data,"registry-backup-"+DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")+"-"+Guid.NewGuid().ToString("N")+".reg");
             using(var b=RegistryKey.OpenBaseKey(a.Hive,a.View)) {
-                using(var key=b.OpenSubKey(a.RegistryPath)) {
-                    if(key==null) throw new IOException("卸载记录已经不存在。");
-                    if(Convert.ToString(key.GetValue("DisplayName",""))!=a.Name||Convert.ToString(key.GetValue("UninstallString",""))!=a.Command||Convert.ToString(key.GetValue("SystemComponent",""))=="1")throw new IOException("卸载记录已经变化，请重新扫描。");
-                }
-                b.DeleteSubKeyTree(a.RegistryPath,false);
+                ValidateStaleRecord(a,b);
+                Directory.CreateDirectory(Store.Data);
+                string root=a.Hive==RegistryHive.LocalMachine?"HKLM":"HKCU";
+                var psi=new ProcessStartInfo(System.IO.Path.Combine(Environment.SystemDirectory,"reg.exe"),"export \""+root+"\\"+a.RegistryPath+"\" \""+backup+"\" /reg:"+(a.View==RegistryView.Registry64?"64":"32")){UseShellExecute=false,CreateNoWindow=true};
+                using(var p=Process.Start(psi)){p.WaitForExit();if(p.ExitCode!=0||!File.Exists(backup))throw new IOException("注册表备份失败，未删除记录。");}
+                ValidateStaleRecord(a,b);
+                b.DeleteSubKeyTree(a.RegistryPath);
             }
             Store.Log("清理失效卸载记录："+a.Name+"；备份："+backup);
+        }
+
+        static void ValidateStaleRecord(AppEntry app,RegistryKey hive) {
+            using(var key=hive.OpenSubKey(app.RegistryPath)) {
+                if(key==null) throw new IOException("卸载记录已经不存在。");
+                string location=Scanner.V(key,"InstallLocation"), command=Scanner.V(key,"UninstallString");
+                if(Scanner.V(key,"DisplayName")!=app.Name||Scanner.V(key,"DisplayVersion")!=app.Version
+                    ||location!=app.InstallLocation||command!=app.Command||Scanner.IconPath(Scanner.V(key,"DisplayIcon"))!=app.Executable
+                    ||Scanner.V(key,"SystemComponent")=="1")
+                    throw new IOException("卸载记录已经变化，请重新扫描。");
+                if(Scanner.V(key,"WindowsInstaller")=="1") throw new IOException("MSI 记录应由 Windows Installer 管理。");
+                EnsureStalePaths(location,app.Path,command,Scanner.V(key,"QuietUninstallString"));
+            }
+        }
+
+        internal static void EnsureStalePaths(string location,string inferredLocation,string command,string quietCommand) {
+            if(string.IsNullOrWhiteSpace(location)&&string.IsNullOrWhiteSpace(command)&&string.IsNullOrWhiteSpace(quietCommand))
+                throw new IOException("缺少安装位置和卸载入口，无法核实记录是否失效。");
+            if(!string.IsNullOrWhiteSpace(location)) RequireMissingPath(location);
+            if(!string.IsNullOrWhiteSpace(inferredLocation)) RequireMissingPath(inferredLocation);
+            foreach(string entry in new[]{command,quietCommand}) {
+                if(string.IsNullOrWhiteSpace(entry)) continue;
+                string exe,args;
+                if(!Scanner.ParseCommand(entry,out exe,out args)) throw new IOException("无法识别卸载命令，不能确定记录已失效。");
+                if(System.IO.Path.GetFileName(exe).Equals("msiexec.exe",StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("MSI 记录应由 Windows Installer 管理。");
+                RequireMissingPath(exe);
+            }
+        }
+
+        static void RequireMissingPath(string value) {
+            string path=Safety.Normalize(Environment.ExpandEnvironmentVariables(value.Trim().Trim('"')));
+            var drive=new DriveInfo(System.IO.Path.GetPathRoot(path));
+            if(drive.DriveType!=DriveType.Fixed||!drive.IsReady||Safety.HasReparseAncestor(path))
+                throw new IOException("卸载记录中的路径无法可靠核实："+path);
+            try { File.GetAttributes(path); }
+            catch(FileNotFoundException) { return; }
+            catch(DirectoryNotFoundException) { return; }
+            throw new IOException("安装位置或卸载程序仍然存在："+path);
         }
     }
 }
