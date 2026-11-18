@@ -51,8 +51,13 @@ namespace CleanBox {
                 check(apps.Contains(fixture), "An existing registration stays in the catalog after follow-up");
                 RememberUninstall(fixture); ApplyRegistrationResult(fixture, RegistrationState.Missing);
                 check(!apps.Contains(fixture) && pendingUninstalls.Contains(fixture), "An absent registration removes the catalog entry while keeping residual follow-up available");
-                FinishUninstallReview(fixture);
-                check(!pendingUninstalls.Contains(fixture), "Only explicit completion removes a residual follow-up");
+                var reinstalled = new AppEntry { Name = fixture.Name, RegistryPath = fixture.RegistryPath,
+                    Version = "updated", Path = fixture.Path + "-reinstalled" };
+                RememberUninstall(reinstalled, replaceExisting: true);
+                ApplyRegistrationResult(fixture, RegistrationState.Missing);
+                check(pendingUninstalls.Single(a => a.Id == fixture.Id) == reinstalled, "Repeat uninstall and later recheck leave the new location on the follow-up menu");
+                FinishUninstallReview(reinstalled);
+                check(!pendingUninstalls.Any(a => a.Id == fixture.Id), "Only explicit completion removes a residual follow-up");
                 await VerifyResidualDialog(check);
             } finally {
                 var owned = new HashSet<AppEntry>(fixtures);

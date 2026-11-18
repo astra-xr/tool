@@ -54,12 +54,23 @@ namespace CleanBox {
                 } finally { if (File.Exists(temporary)) File.Delete(temporary); }
             }
         }
-        internal void Remember(AppEntry app) {
-            Update(value => {
-                if (!value.Pending.Any(a => a.Id == app.Id)) value.Pending.Add(app);
-            });
+        internal AppEntry Remember(AppEntry app, bool replaceExisting = false) {
+            AppEntry recorded = null;
+            Update(value => recorded = SetPending(value.Pending, app, replaceExisting));
+            return recorded;
         }
-        internal void Finish(string id) { Update(value => value.Pending.RemoveAll(a => a.Id == id)); }
+
+        internal static AppEntry SetPending(List<AppEntry> pending, AppEntry app, bool replaceExisting) {
+            int index = pending.FindIndex(entry => string.Equals(entry.Id, app.Id, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) pending.Add(app);
+            else if (replaceExisting) pending[index] = app;
+            else return pending[index];
+            return app;
+        }
+
+        internal void Finish(string id) {
+            Update(value => value.Pending.RemoveAll(app => string.Equals(app.Id, id, StringComparison.OrdinalIgnoreCase)));
+        }
         static string Signature(AppEntry app) {
             return string.Join("\0", new[] { app.Name, app.Version, Scanner.CleanPath(app.InstallLocation),
                 Scanner.CleanPath(app.Path), Scanner.CleanPath(app.Executable), app.Command, app.Package });
@@ -73,9 +84,13 @@ namespace CleanBox {
         internal void RestoreMeasurement(AppEntry app) {
             var saved = data.Measurements.FirstOrDefault(m => m.Id == app.Id);
             if (saved == null || saved.Bytes < 0 || saved.MeasuredUtcTicks < DateTime.MinValue.Ticks || saved.MeasuredUtcTicks > DateTime.MaxValue.Ticks) return;
+            bool signatureChanged = !string.Equals(saved.Signature, Signature(app), StringComparison.OrdinalIgnoreCase);
+            if (saved.Kind == AppSizeKind.Executable && app.SizeKind == AppSizeKind.Executable
+                && app.SizeBytes.HasValue && (signatureChanged || app.SizeBytes.Value != saved.Bytes)) return;
+
             app.SizeBytes = saved.Bytes; app.SizeKind = saved.Kind; app.SizePartial = saved.Partial;
             app.SizeMeasuredUtc = new DateTime(saved.MeasuredUtcTicks, DateTimeKind.Utc);
-            app.SizeStale = !string.Equals(saved.Signature, Signature(app), StringComparison.OrdinalIgnoreCase);
+            app.SizeStale = signatureChanged;
             app.SizeNote = (app.SizeStale ? "版本、位置或安装信息已变化，显示上次实测值，请重新计算。\r\n" : "") + saved.Note;
         }
     }

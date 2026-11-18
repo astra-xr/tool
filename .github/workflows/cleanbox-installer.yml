@@ -43,8 +43,8 @@ jobs:
           Invoke-TestProcess $setup $setupArgs
 
           $app = Join-Path $installDir 'CleanBox.exe'
-          if ($env:RELEASE_BUILD -eq 'true' -and (Get-Item -LiteralPath $app).VersionInfo.FileVersion.Trim() -ne '2.4.3.0') {
-              throw 'The installer must contain CleanBox 2.4.3.'
+          if ($env:RELEASE_BUILD -eq 'true' -and (Get-Item -LiteralPath $app).VersionInfo.FileVersion.Trim() -ne '2.4.4.0') {
+              throw 'The installer must contain CleanBox 2.4.4.'
           }
           $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'CleanBox/CleanBox.lnk'
           $desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'CleanBox.lnk'
@@ -125,7 +125,7 @@ jobs:
           }
           Write-Output 'Installer lifecycle, embedded icons, desktop and Start menu shortcut checks passed.'
         env:
-          RELEASE_BUILD: ${{ github.event.head_commit.message == 'Publish CleanBox 2.4.3' }}
+          RELEASE_BUILD: ${{ github.event.head_commit.message == 'Publish CleanBox 2.4.4' }}
       - uses: actions/upload-artifact@v4
         with:
           name: CleanBox-Release-Windows-x64
@@ -137,7 +137,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: github.event.head_commit.message == 'Publish CleanBox 2.4.3'
+    if: github.event.head_commit.message == 'Publish CleanBox 2.4.4'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -161,9 +161,9 @@ jobs:
           sha256sum --check CleanBox-Windows-x64.zip.sha256
 
           cat > "$RUNNER_TEMP/cleanbox-notes.md" <<'EOF'
-          - 回收卸载残留前重新核对安装登记和路径归属，发现仍有软件使用时停止回收。
-          - 清理失效记录时确认安装位置及卸载入口，备份前后分别核对记录。
-          - 修正文件解锁页的盘符根目录解析，以及磁盘发现的扩展名与依赖目录误报。
+          - 同一软件重装后再次卸载时，核对任务保存最近的安装路径，重启后可继续。
+          - 便携软件重新扫描时优先显示当前程序文件大小。
+          - 软件清单保留完整的盘符根目录路径，打开位置和磁盘筛选可以正确识别。
 
           **Windows x64 安装版**：下载 `CleanBox-Setup-Windows-x64.exe`，双击后按向导安装。需要桌面入口时，勾选「创建桌面快捷方式」。
 
@@ -171,8 +171,8 @@ jobs:
 
           两个下载包均附 SHA-256 校验文件。
           EOF
-          gh release create cleanbox-v2.4.3 \
+          gh release create cleanbox-v2.4.4 \
             CleanBox-Setup-Windows-x64.exe CleanBox-Setup-Windows-x64.exe.sha256 \
             CleanBox-Windows-x64.zip CleanBox-Windows-x64.zip.sha256 \
-            --target "$GITHUB_SHA" --title 'CleanBox 2.4.3' \
+            --target "$GITHUB_SHA" --title 'CleanBox 2.4.4' \
             --notes-file "$RUNNER_TEMP/cleanbox-notes.md" --latest

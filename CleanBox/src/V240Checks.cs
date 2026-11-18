@@ -29,6 +29,14 @@ namespace CleanBox {
             var other = new AppEntry { Name = "Second task", RegistryPath = "another-task" };
             first.Remember(other); restarted.Finish(app.Id);
             Check(new CatalogState(statePath).Pending.Single().Id == other.Id, "Explicit task completion merges with another instance without dropping unrelated tasks");
+            first.Remember(app);
+            var reinstalled = new AppEntry { Name = app.Name, RegistryPath = app.RegistryPath, Version = "2", Path = app.Path + "-reinstalled" };
+            restarted.Remember(reinstalled, replaceExisting: true);
+            first.Remember(app);
+            var reloaded = new CatalogState(statePath).Pending.ToArray();
+            Check(reloaded.Length == 2 && reloaded.Any(x => x.Id == other.Id)
+                && reloaded.Single(x => x.Id == app.Id).Path == reinstalled.Path,
+                "Repeat uninstall persists its new location across instances and keeps unrelated tasks");
             string scanRoot = Path.Combine(root, "usage"); Directory.CreateDirectory(Path.Combine(scanRoot, "child"));
             File.WriteAllBytes(Path.Combine(scanRoot, "large.bin"), new byte[16384]);
             File.WriteAllBytes(Path.Combine(scanRoot, "child", "small.bin"), new byte[4096]);

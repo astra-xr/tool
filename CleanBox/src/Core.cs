@@ -151,7 +151,12 @@ namespace CleanBox {
             }
         }
         internal static string V(RegistryKey k,string name) { return Convert.ToString(k.GetValue(name,"")); }
-        public static string CleanPath(string p) { try { p=Environment.ExpandEnvironmentVariables((p??"").Trim().Trim('"')); return string.IsNullOrWhiteSpace(p)?"":System.IO.Path.GetFullPath(p).TrimEnd('\\'); } catch { return ""; } }
+        public static string CleanPath(string path) {
+            try {
+                path = Environment.ExpandEnvironmentVariables((path ?? "").Trim().Trim('"'));
+                return string.IsNullOrWhiteSpace(path) ? "" : Safety.TrimTrailingSeparators(System.IO.Path.GetFullPath(path));
+            } catch { return ""; }
+        }
         internal static string IconPath(string p) { return CleanPath(Regex.Replace(p??"",@",\s*-?\d+\s*$", "")); }
         public static bool ParseCommand(string command,out string exe,out string args) {
             exe="";args=""; string s=Environment.ExpandEnvironmentVariables((command??"").Trim());
@@ -216,10 +221,12 @@ namespace CleanBox {
             if(string.IsNullOrWhiteSpace(p)||!Regex.IsMatch(p,@"^[A-Za-z]:[\\/]")) throw new IOException("请选择本机磁盘上的绝对路径。");
             if(p.Substring(2).Contains(":")) throw new IOException("不支持设备路径或文件数据流。");
             foreach(var part in p.Replace('/','\\').Substring(2).Split('\\')) if(part.EndsWith(".")||part.EndsWith(" ")||Regex.IsMatch(part,@"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)",RegexOptions.IgnoreCase)) throw new IOException("路径包含不明确或保留的名称，无法安全处理。");
-            string n=System.IO.Path.GetFullPath(p);
-            if(n.Length>3)n=n.TrimEnd('\\');
+            string n=TrimTrailingSeparators(System.IO.Path.GetFullPath(p));
             foreach(var part in n.Substring(2).Split('\\')) if(part.EndsWith(".")||part.EndsWith(" ")) throw new IOException("路径尾部有空格或点，无法安全处理。");
             return n;
+        }
+        internal static string TrimTrailingSeparators(string fullPath) {
+            return fullPath.Length == System.IO.Path.GetPathRoot(fullPath).Length ? fullPath : fullPath.TrimEnd('\\');
         }
         public static bool Within(string p,string parent) { if(string.IsNullOrEmpty(p)||string.IsNullOrEmpty(parent)) return false; p=p.TrimEnd('\\');parent=parent.TrimEnd('\\');return p.Equals(parent,StringComparison.OrdinalIgnoreCase)||p.StartsWith(parent+"\\",StringComparison.OrdinalIgnoreCase); }
         public static bool HasReparseAncestor(string p) {

@@ -1,12 +1,14 @@
 ﻿<p align="center"><img src="assets/cleanbox.png" width="96" alt="CleanBox 图标"></p>
 
-# 清理匣 CleanBox 2.4.3
+# 清理匣 CleanBox 2.4.4
 
 Windows 软件发现、卸载与占用文件处理工具。补充系统卸载列表之外的程序候选，并帮助定位“文件正在使用，无法删除”的原因。
 
 采用 C# / Windows Forms，面向 Windows 10/11 x64，依赖 .NET Framework 4.8。程序运行不需要 Python、Node.js 或额外的开发环境。
 
 ## 功能
+
+2.4.4 修正重复卸载后恢复旧核对任务、历史记录覆盖本次读取的程序大小，以及软件清单处理盘符根目录的问题。
 
 2.4.3 增加回收残留前的安装登记复核，收紧失效记录清理的判定，修正盘符根目录的占用检查和磁盘发现的扩展名、目录过滤。
 

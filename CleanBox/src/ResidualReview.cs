@@ -111,6 +111,7 @@ namespace CleanBox {
 
     public partial class MainForm {
         readonly List<AppEntry> pendingUninstalls = new List<AppEntry>();
+        readonly HashSet<string> unsavedUninstallReplacements = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Panel uninstallFollowup;
         Button followupButton;
 
@@ -132,15 +133,23 @@ namespace CleanBox {
             pendingUninstalls.AddRange(catalogState.Pending); UpdateUninstallFollowup(); return uninstallFollowup;
         }
 
-        void RememberUninstall(AppEntry app) {
-            if (!pendingUninstalls.Any(a => a.Id == app.Id)) pendingUninstalls.Add(app);
-            try { catalogState.Remember(app); } catch (Exception ex) { ShowError(new IOException("核对任务未保存，关闭程序前请重试。" + ex.Message)); }
+        void RememberUninstall(AppEntry app, bool replaceExisting = false) {
+            var pending = CatalogState.SetPending(pendingUninstalls, app, replaceExisting);
+            try {
+                var recorded = catalogState.Remember(pending, replaceExisting || unsavedUninstallReplacements.Contains(pending.Id));
+                CatalogState.SetPending(pendingUninstalls, recorded, true);
+                unsavedUninstallReplacements.Remove(pending.Id);
+            } catch (Exception ex) {
+                if (replaceExisting) unsavedUninstallReplacements.Add(pending.Id);
+                ShowError(new IOException("核对任务未保存，关闭程序前请重试。" + ex.Message));
+            }
             UpdateUninstallFollowup();
         }
 
         void FinishUninstallReview(AppEntry app) {
             catalogState.Finish(app.Id);
-            pendingUninstalls.RemoveAll(a => a.Id == app.Id); UpdateUninstallFollowup();
+            unsavedUninstallReplacements.Remove(app.Id);
+            pendingUninstalls.RemoveAll(a => string.Equals(a.Id, app.Id, StringComparison.OrdinalIgnoreCase)); UpdateUninstallFollowup();
         }
 
         void UpdateUninstallFollowup() {

@@ -30,6 +30,7 @@ namespace CleanBox {
             Check(Store.QuotePS("a'b")=="'a''b'","PowerShell literal quoting preserves apostrophes");
             Reject(()=>Safety.Check(Path.Combine(Path.GetPathRoot(Environment.SystemDirectory),"pagefile.sys")),"System paging file protected");
             VerifyV243(root);
+            VerifyV244(root);
             string linkHolder=Path.Combine(root,"link-holder"),destination=Path.Combine(root,"sentinel"),junction=Path.Combine(linkHolder,"jump");Directory.CreateDirectory(linkHolder);Directory.CreateDirectory(destination);File.WriteAllText(Path.Combine(destination,"keep.txt"),"must survive link rejection");
             Store.RunPowerShell("New-Item -ItemType Junction -Path "+Store.QuotePS(junction)+" -Target "+Store.QuotePS(destination)+" | Out-Null",CancellationToken.None);
             File.WriteAllBytes(Path.Combine(linkHolder,"local.bin"),new byte[4096]);
@@ -122,6 +123,42 @@ namespace CleanBox {
             Check(!ResidualReview.UsesResidualLocation(original,residual,new AppEntry { Name="Other app", Path=original.Path+"-other" }),
                 "An unrelated registration with a similar path prefix does not block recycling");
             Reject(()=>ResidualReview.EnsureCanRecycle(new AppEntry { RegistryPath="invalid" },residual,CancellationToken.None),"Recycling refuses a registration that cannot be verified");
+        }
+        internal static void VerifyV244(string root) {
+            var state = new CatalogState(null);
+            var original = new AppEntry { Name = "Repeat uninstall", Version = "1", RegistryPath = "Repeat-Task", Path = Path.Combine(root, "old-app") };
+            var latest = new AppEntry { Name = original.Name, Version = "2", RegistryPath = "repeat-task", Path = Path.Combine(root, "new-app") };
+            state.Remember(original);
+            state.Remember(latest, replaceExisting: true);
+            state.Remember(original);
+            Check(state.Pending.Single() == latest, "A repeat uninstall records the new path and a passive recheck cannot restore the old one");
+
+            string executable = Path.Combine(root, "remeasured-portable.exe");
+            File.WriteAllBytes(executable, new byte[33]);
+            var measured = Scanner.FromExe(executable, "Fixture");
+            measured.SizeMeasuredUtc = DateTime.UtcNow;
+            state.SaveMeasurement(measured);
+            var unchanged = Scanner.FromExe(executable, "Fixture");
+            state.RestoreMeasurement(unchanged);
+            Check(unchanged.SizeBytes == 33 && unchanged.SizeMeasuredUtc == measured.SizeMeasuredUtc,
+                "An unchanged portable executable keeps its manual measurement metadata");
+            File.WriteAllBytes(executable, new byte[102]);
+            var resized = Scanner.FromExe(executable, "Fixture");
+            state.RestoreMeasurement(resized);
+            Check(resized.SizeBytes == 102 && !resized.SizeStale && resized.SizeMeasuredUtc == DateTime.MinValue,
+                "A fresh portable executable size takes precedence over its saved measurement");
+            File.WriteAllBytes(executable, new byte[33]);
+            var updated = Scanner.FromExe(executable, "Fixture");
+            updated.Version = "updated";
+            state.RestoreMeasurement(updated);
+            Check(updated.SizeBytes == 33 && !updated.SizeStale && updated.SizeMeasuredUtc == DateTime.MinValue,
+                "An updated portable executable can use its verified size even when its length is unchanged");
+
+            string driveRoot = Path.GetPathRoot(root);
+            string normalized = Scanner.CleanPath(driveRoot);
+            Check(normalized == driveRoot && CatalogClassification.Drive(new AppEntry { Path = normalized }) == driveRoot
+                && MainForm.PathArgument(normalized) == driveRoot, "A registered drive root remains absolute through the disk filter and Explorer argument");
+            Check(Scanner.CleanPath(root + "\\") == root, "Catalog path cleanup still trims the trailing separator of a normal directory");
         }
         public static void ScanReport(){Directory.CreateDirectory(Store.Data);var apps=new List<AppEntry>();var messages=new List<string>();
             try{Scanner.Registered(apps.Add,messages.Add,CancellationToken.None);Scanner.Packages(apps.Add,messages.Add,CancellationToken.None);Scanner.Shortcuts(apps.Add,messages.Add,CancellationToken.None);
