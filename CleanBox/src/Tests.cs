@@ -33,6 +33,7 @@ namespace CleanBox {
             VerifyV244(root);
             VerifyV250(root);
             VerifyRegistrationVisibility(root);
+            VerifyV260(root);
             string linkHolder=Path.Combine(root,"link-holder"),destination=Path.Combine(root,"sentinel"),junction=Path.Combine(linkHolder,"jump");Directory.CreateDirectory(linkHolder);Directory.CreateDirectory(destination);File.WriteAllText(Path.Combine(destination,"keep.txt"),"must survive link rejection");
             Store.RunPowerShell("New-Item -ItemType Junction -Path "+Store.QuotePS(junction)+" -Target "+Store.QuotePS(destination)+" | Out-Null",CancellationToken.None);
             File.WriteAllBytes(Path.Combine(linkHolder,"local.bin"),new byte[4096]);
@@ -107,12 +108,18 @@ namespace CleanBox {
             Check(files.SequenceEqual(new[]{"portable.EXE"}),"EXE discovery checks the exact extension and excludes dependencies regardless of case");
 
             string missing=Path.Combine(root,"already-removed"), uninstaller=Path.Combine(missing,"uninstall.exe");
-            Operations.EnsureStalePaths(missing,missing,"\""+uninstaller+"\" /remove","");
+            var stale = new AppEntry { InstallLocation=missing, Command="\""+uninstaller+"\" /remove" };
+            stale.Registration = Scanner.AssessRegistration(stale, "", false);
+            Operations.EnsureStaleRegistration(stale, missing);
             Check(true,"A missing verified install location and uninstall executable allow stale cleanup");
-            Reject(()=>Operations.EnsureStalePaths(missing,missing,"MsiExec /I{00000000-0000-0000-0000-000000000000}",""),"An unrecognized installer command cannot authorize registry cleanup");
-            Reject(()=>Operations.EnsureStalePaths(missing,missing,"","\""+Path.Combine(scan,"portable.EXE")+"\" /quiet"),"An existing quiet uninstaller protects the registration");
-            Reject(()=>Operations.EnsureStalePaths(scan,"","",""),"An existing install location protects the registration");
-            Reject(()=>Operations.EnsureStalePaths("","","",""),"Missing evidence cannot authorize registry cleanup");
+            stale.Registration = Scanner.AssessRegistration(stale, Path.Combine(scan,"portable.EXE"), false);
+            Reject(()=>Operations.EnsureStaleRegistration(stale,missing),"A present launcher protects an app even when the registered install location is obsolete");
+            stale.Registration = Scanner.AssessRegistration(stale, "", true);
+            Reject(()=>Operations.EnsureStaleRegistration(stale,missing),"Windows Installer registrations remain protected");
+            stale.Registration = Scanner.AssessRegistration(stale, "", false);
+            Reject(()=>Operations.EnsureStaleRegistration(stale,scan),"An existing inferred install location protects the registration");
+            var unknown=new AppEntry { Registration=RegistryStatus.Incomplete };
+            Reject(()=>Operations.EnsureStaleRegistration(unknown,""),"Missing evidence cannot authorize registry cleanup");
 
             var original=new AppEntry { Name="Removed app", Path=Path.Combine(root,"app") };
             string residual=Path.Combine(root,"settings");
@@ -126,6 +133,29 @@ namespace CleanBox {
                 "An unrelated registration with a similar path prefix does not block recycling");
             Reject(()=>ResidualReview.EnsureCanRecycle(new AppEntry { RegistryPath="invalid" },residual,CancellationToken.None),"Recycling refuses a registration that cannot be verified");
         }
+        internal static void VerifyV260(string root) {
+            string history = Path.Combine(root, "damaged-history");
+            Directory.CreateDirectory(history);
+            string path = Path.Combine(history, "catalog-state.json");
+            const string damaged = "{ damaged!";
+            File.WriteAllText(path, damaged);
+            var state = new CatalogState(history);
+            var app = new AppEntry { Name="Recovery fixture", RegistryPath="recovery", SizeBytes=123 };
+            state.Remember(app); state.SaveMeasurement(app);
+            Check(new CatalogState(history).Pending.Single().Id == app.Id
+                && File.ReadAllText(Directory.GetFiles(history,"catalog-state.corrupt-*.json").Single()) == damaged,
+                "Damaged history is backed up and new follow-up and measurement data can be saved");
+            var restored = new AppEntry { Name=app.Name, RegistryPath=app.RegistryPath };
+            new CatalogState(history).RestoreMeasurement(restored);
+            Check(restored.SizeBytes==123,"Measurements survive a restart after history recovery");
+            const string newer = "{\"Format\":2,\"Pending\":null}";
+            File.WriteAllText(path, newer);
+            Reject(()=>state.Remember(app),"A newer history format never triggers damaged-file recovery");
+            Check(File.ReadAllText(path)==newer,"An unsupported history version remains intact");
+            Check(MainForm.DescribeLocks(new LockReport { Partial=true }).StartsWith("暂无法确认占用"),
+                "An incomplete lock check does not look like a confirmed empty result");
+        }
+
         static void VerifyRegistrationVisibility(string root) {
             string folder = Path.Combine(root, "registration-fixture");
             string launcher = Path.Combine(folder, "launcher.exe");

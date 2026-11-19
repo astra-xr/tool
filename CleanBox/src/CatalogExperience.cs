@@ -13,12 +13,13 @@ namespace CleanBox {
         string appliedSearch = "";
         bool changingCatalog;
         int filterApplications;
+        const int SearchDelayMilliseconds = 120;
         Button measureButton;
 
         void ScheduleSearch() {
             if (updatingFilters) return;
             if (searchDelay == null) {
-                searchDelay = new System.Windows.Forms.Timer { Interval = 220 };
+                searchDelay = new System.Windows.Forms.Timer { Interval = SearchDelayMilliseconds };
                 searchDelay.Tick += (s, e) => ApplyFilter();
             }
             searchDelay.Stop(); searchDelay.Start();
@@ -32,38 +33,70 @@ namespace CleanBox {
             var selected = grid.SelectedRows.Count > 0 ? grid.SelectedRows[0] : null;
             int topIndex = grid.FirstDisplayedScrollingRowIndex;
             var top = topIndex >= 0 ? grid.Rows[topIndex] : null;
+            var matches = CaptureCatalogFilter();
+            var changes = new System.Collections.Generic.List<DataGridViewRow>();
             DataGridViewRow first = null;
+            foreach (DataGridViewRow row in grid.Rows) {
+                bool visible = matches(row.Tag as AppEntry);
+                if (visible && first == null) first = row;
+                if (row.Visible != visible) changes.Add(row);
+            }
+            if (changes.Count > 0) EditCatalogGrid(() => {
+                if (grid.CurrentCell != null && !matches(grid.CurrentCell.OwningRow.Tag as AppEntry)) grid.CurrentCell = null;
+                foreach (var row in changes) row.Visible = !row.Visible;
+                RestoreCatalogPosition(selected, top, first);
+            });
+            else if (selected == null && first != null) RestoreCatalogPosition(null, top, first);
+            ShowSelection(); UpdateCounts(); UpdateFilterCaption();
+        }
+
+        void ReplaceCatalog(System.Collections.Generic.IEnumerable<AppEntry> entries) {
+            var previous = Selected();
+            int topIndex = grid.FirstDisplayedScrollingRowIndex;
+            var top = topIndex >= 0 ? grid.Rows[topIndex].Tag as AppEntry : null;
+            var sortColumn = grid.SortedColumn;
+            var sortDirection = grid.SortOrder == SortOrder.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+            appliedSearch = search.Text.Trim();
+            var matches = CaptureCatalogFilter();
+            EditCatalogGrid(() => {
+                grid.Rows.Clear();
+                apps.Clear(); ids.Clear(); RebuildCatalogIndex();
+                var rows = entries.Select(app => CreateCatalogRow(app, matches)).Where(row => row != null).ToArray();
+                if (rows.Length > 0) grid.Rows.AddRange(rows);
+                if (sortColumn != null && rows.Length > 0) grid.Sort(sortColumn, sortDirection);
+                var visible = grid.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).ToArray();
+                var selected = previous == null ? null : visible.FirstOrDefault(row => previous.Id.Equals(((AppEntry)row.Tag).Id, StringComparison.OrdinalIgnoreCase));
+                var firstDisplayed = top == null ? null : visible.FirstOrDefault(row => top.Id.Equals(((AppEntry)row.Tag).Id, StringComparison.OrdinalIgnoreCase));
+                RestoreCatalogPosition(selected, firstDisplayed, visible.FirstOrDefault());
+            });
+            if (advancedFilters.Visible) RefreshFilterChoices();
+            ApplyFilter();
+        }
+
+        void RestoreCatalogPosition(DataGridViewRow selected, DataGridViewRow top, DataGridViewRow first) {
+            var chosen = selected != null && selected.Visible ? selected : first;
+            if (chosen == null) { grid.CurrentCell = null; grid.ClearSelection(); }
+            else if (!chosen.Selected || grid.CurrentCell == null || grid.CurrentCell.OwningRow != chosen) {
+                grid.ClearSelection(); chosen.Selected = true; grid.CurrentCell = chosen.Cells[0];
+            }
+            if (top != null && top.Visible && top.Index >= 0 && grid.FirstDisplayedScrollingRowIndex != top.Index)
+                grid.FirstDisplayedScrollingRowIndex = top.Index;
+        }
+
+        void EditCatalogGrid(Action edit) {
             changingCatalog = true;
             var binding = ScrollSkin.Find(grid);
             if (binding != null) binding.BeginBatch();
             bool redraw = grid.IsHandleCreated && grid.Visible;
             if (redraw) ScrollNative.SendMessage(grid.Handle, 0xB, IntPtr.Zero, IntPtr.Zero);
             grid.SuspendLayout();
-            var sizing = grid.AutoSizeColumnsMode;
-            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             try {
-                foreach (DataGridViewRow row in grid.Rows) {
-                    bool visible = Matches(row.Tag as AppEntry);
-                    if (row.Visible != visible) {
-                        if (!visible && grid.CurrentCell != null && grid.CurrentCell.OwningRow == row) grid.CurrentCell = null;
-                        row.Visible = visible;
-                    }
-                    if (visible && first == null) first = row;
-                }
-                var chosen = selected != null && selected.Visible ? selected : first;
-                if (chosen != null) {
-                    if (!chosen.Selected || grid.CurrentCell == null) {
-                        grid.ClearSelection(); chosen.Selected = true; grid.CurrentCell = chosen.Cells[0];
-                    }
-                } else { grid.CurrentCell = null; grid.ClearSelection(); }
-                if (top != null && top.Visible && top.Index >= 0) grid.FirstDisplayedScrollingRowIndex = top.Index;
+                edit();
             } finally {
-                grid.AutoSizeColumnsMode = sizing;
                 grid.ResumeLayout(); changingCatalog = false;
                 if (redraw) { ScrollNative.SendMessage(grid.Handle, 0xB, new IntPtr(1), IntPtr.Zero); grid.Invalidate(); }
                 if (binding != null) binding.EndBatch();
             }
-            ShowSelection(); UpdateCounts(); UpdateFilterCaption();
         }
 
         void SortBySize() {
@@ -126,7 +159,7 @@ namespace CleanBox {
         void PaintSizeCell(DataGridViewCellPaintingEventArgs e) {
             var app = grid.Rows[e.RowIndex].Tag as AppEntry;
             if (app == null) return;
-            if (!Palette.Glass) e.PaintBackground(e.ClipBounds, true);
+            e.Paint(e.ClipBounds, DataGridViewPaintParts.Background | DataGridViewPaintParts.SelectionBackground | DataGridViewPaintParts.Border);
             var bounds = e.CellBounds;
             var flags = TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.PreserveGraphicsTranslateTransform
                 | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding;

@@ -33,9 +33,17 @@ namespace CleanBox {
         static JavaScriptSerializer Serializer() { return new JavaScriptSerializer { MaxJsonLength = 16777216 }; }
         CatalogStateData Read() {
             if (directory == null || !File.Exists(FileName)) return new CatalogStateData();
-            var value = Serializer().Deserialize<CatalogStateData>(File.ReadAllText(FileName, Encoding.UTF8));
-            if (value == null || value.Format != 1 || value.Pending == null || value.Measurements == null)
-                throw new IOException("历史记录格式无法识别，原文件已保留。");
+            string json = File.ReadAllText(FileName, Encoding.UTF8);
+            CatalogStateData value;
+            try { value = Serializer().Deserialize<CatalogStateData>(json); }
+            catch (ArgumentException ex) { throw new InvalidDataException("历史记录无法解析。", ex); }
+            catch (InvalidOperationException ex) { throw new InvalidDataException("历史记录无法解析。", ex); }
+            if (value != null && value.Format != 1) throw new IOException("当前版本无法识别历史记录格式。原文件已保留。");
+            if (value == null || value.Pending == null || value.Measurements == null
+                || value.Pending.Any(app => app == null || app.Package == null || app.RegistryPath == null || app.Executable == null
+                    || app.Name == null || app.Path == null || app.InstallLocation == null)
+                || value.Measurements.Any(saved => saved == null))
+                throw new InvalidDataException("历史记录内容不完整。");
             return value;
         }
         void Update(Action<CatalogStateData> change) {
@@ -43,14 +51,21 @@ namespace CleanBox {
             Directory.CreateDirectory(directory);
             // Merge against the latest file while holding an exclusive cross-process lock.
             using (var gate = new FileStream(Path.Combine(directory, "catalog-state.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
-                var current = Read();
+                CatalogStateData current;
+                string backup = null;
+                try { current = Read(); }
+                catch (InvalidDataException) {
+                    current = new CatalogStateData();
+                    backup = Path.Combine(directory, "catalog-state.corrupt-" + Guid.NewGuid().ToString("N") + ".json");
+                }
                 change(current);
                 string temporary = FileName + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 try {
                     File.WriteAllText(temporary, Serializer().Serialize(current), new UTF8Encoding(false));
-                    if (File.Exists(FileName)) File.Replace(temporary, FileName, null);
+                    if (File.Exists(FileName)) File.Replace(temporary, FileName, backup);
                     else File.Move(temporary, FileName);
                     data = current;
+                    if (backup != null && File.Exists(backup)) Store.Log("已重建损坏的历史记录。备份：" + backup);
                 } finally { if (File.Exists(temporary)) File.Delete(temporary); }
             }
         }

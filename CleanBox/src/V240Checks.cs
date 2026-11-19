@@ -70,9 +70,12 @@ namespace CleanBox {
                 await AnalyzeUsage();
                 check(currentPage == 4 && usageNavigation.Selected && usageResult.Root.Bytes == 20480, "Disk analysis works through its normal navigation and scan entry points");
                 check(usageGrid.Rows[0].Cells[0].Value.ToString() == "large.bin", "Disk listing starts with the largest entry");
+                check(UsageShare((UsageNode)usageGrid.Rows[0].Tag) == 0.8 && usageBreadcrumbs.Controls.Count == 1,
+                    "The leading row shows its share of the analyzed root and the path starts at the root breadcrumb");
                 var child = usageResult.Root.Children.First(n => n.Directory);
                 ShowUsageDirectory(child); check(usageUp.Enabled && usageGrid.Rows.Count == 1, "Directory expansion displays its children and enables parent navigation");
-                usageUp.PerformClick(); check(usageCurrent == usageResult.Root, "Parent navigation returns to the analyzed root");
+                ((Button)usageBreadcrumbs.Controls[0]).PerformClick();
+                check(usageCurrent == usageResult.Root, "Clicking the root breadcrumb returns to the analyzed root");
                 var synthetic = Enumerable.Range(0, 405).Select(i => new UsageNode { Name = "Page fixture " + i, Path = Path.Combine(root, "page-" + i), Bytes = i, Parent = usageResult.Root }).ToList();
                 usageResult.Root.Children.AddRange(synthetic); ShowUsageDirectory(usageResult.Root);
                 var firstPage = usageGrid.Rows.Cast<DataGridViewRow>().Select(r => r.Tag).ToArray();

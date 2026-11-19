@@ -258,7 +258,7 @@ namespace CleanBox {
                         var plan = await Task.Run(() => CleanupPlan.Capture(item.Path, token));
                         token.ThrowIfCancellationRequested();
                         using (var confirmation = BuildConfirmation("移到回收站", plan.Preview + "\r\n发现依据：" + item.Evidence
-                            + "\r\n\r\n将处理该目标及其全部内容。请核对配置目录内需要保留的数据。Windows 若提示无法回收，请取消。", false)) {
+                            + "\r\n\r\n将处理该目标及其全部内容。请核对配置目录内需要保留的数据。Windows 若提示无法回收，请取消。", false, plan)) {
                             if (confirmation.ShowDialog(f) != DialogResult.OK) { note.Text = "已取消清理。"; return; }
                         }
                         var result = await RecycleInBackground(plan, () => ResidualReview.EnsureCanRecycle(app, item.Path, token));

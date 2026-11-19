@@ -41,12 +41,12 @@ namespace CleanBox {
                     var clock = Stopwatch.StartNew(); ApplyFilter(); clock.Stop(); times.Add(clock.Elapsed.TotalMilliseconds);
                 }
                 Directory.CreateDirectory(Store.Data);
-                File.WriteAllText(Path.Combine(Store.Data, "catalog-performance.txt"), "Rows: " + apps.Count + "\r\nFilter milliseconds: " + string.Join(", ", times.Select(t => t.ToString("0.0"))) + "\r\nMax: " + times.Max().ToString("0.0") + " ms\r\nTyping debounce: 220 ms");
+                File.WriteAllText(Path.Combine(Store.Data, "catalog-performance.txt"), "Rows: " + apps.Count + "\r\nFilter milliseconds: " + string.Join(", ", times.Select(t => t.ToString("0.0"))) + "\r\nMax: " + times.Max().ToString("0.0") + " ms\r\nTyping debounce: " + SearchDelayMilliseconds + " ms");
                 check(times.Max() < 1500, "Large-list filtering stays bounded (" + apps.Count + " rows, worst " + times.Max().ToString("0.0") + " ms)");
                 search.Text = fixture.Name; ApplyFilter();
                 check(detail.Text.Contains("时间上限") && measureButton.Enabled, "Unknown size shows a useful reason and an available remeasurement action");
                 await RemeasureSelected();
-                check(fixture.SizeBytes == 8192 && fixture.SizeKind == AppSizeKind.InstallDirectory && detail.Text.Contains("8 KB") && fixture.SizeBadge == "目录实测", "Single-app remeasurement updates both numeric data and its scope label");
+                check(fixture.SizeBytes == 8192 && fixture.SizeKind == AppSizeKind.InstallDirectory && detailSize.Text == "8 KB" && fixture.SizeBadge == "目录实测", "Single-app remeasurement updates both numeric data and its scope label");
                 ApplyRegistrationResult(fixture, RegistrationState.Present);
                 check(apps.Contains(fixture), "An existing registration stays in the catalog after follow-up");
                 ApplyRegistrationResult(fixture, RegistrationState.Stale);

@@ -13,7 +13,7 @@ namespace CleanBox {
         Panel Input(TextBox field,Padding margin){var frame=new InputFrame{Dock=DockStyle.Fill,Margin=margin};field.Dock=DockStyle.None;field.BorderStyle=BorderStyle.None;field.Margin=Padding.Empty;field.Anchor=AnchorStyles.Left|AnchorStyles.Top|AnchorStyles.Right;frame.Controls.Add(field);Action arrange=()=>{field.Left=frame.Padding.Left;field.Width=Math.Max(1,frame.ClientSize.Width-frame.Padding.Horizontal);field.Top=Math.Max(0,(frame.ClientSize.Height-field.Height)/2);};frame.Resize+=(s,e)=>arrange();field.Enter+=(s,e)=>frame.Invalidate();field.Leave+=(s,e)=>frame.Invalidate();arrange();return frame;}
         Panel Heading(string title,string subtitle){var p=new CanvasPanel{Dock=DockStyle.Top,Height=78};var words=new CanvasPanel{Dock=DockStyle.Fill};words.Controls.Add(new Label{Text=subtitle,Dock=DockStyle.Bottom,Height=30,Tag="muted",AutoEllipsis=true});words.Controls.Add(new Label{Text=title,Dock=DockStyle.Top,Height=40,Font=new Font(Font.FontFamily,21,FontStyle.Bold)});var actions=new CanvasPanel{Dock=DockStyle.Right,Width=146,Name="headingActions",Padding=new Padding(8,3,0,0)};p.Controls.Add(words);p.Controls.Add(actions);return p;}
         void BuildShell(){
-            var sidebarFrame=new CanvasPanel{Dock=DockStyle.Left,Width=204,Padding=new Padding(12,16,4,16)};
+            var sidebarFrame=new CanvasPanel{Dock=DockStyle.Left,Width=190,Padding=new Padding(12,16,4,16)};
             sidebar=new SurfacePanel{Dock=DockStyle.Fill,Padding=new Padding(13,24,13,16),Tag="sidebar"};sidebarFrame.Controls.Add(sidebar);
             var brand=new Label{Text="清理匣",Dock=DockStyle.Top,Height=43,Font=new Font(Font.FontFamily,22,FontStyle.Bold),Tag="accent",TextAlign=ContentAlignment.MiddleLeft};
             var brandSub=TextLabel("CleanBox  "+typeof(MainForm).Assembly.GetName().Version.ToString(3),34,"muted");var nav=new CanvasFlowPanel{Dock=DockStyle.Top,Height=215,FlowDirection=FlowDirection.TopDown,WrapContents=false};
@@ -48,6 +48,7 @@ namespace CleanBox {
             var searchHint=TextLabel("搜索名称、发布者或路径  ·  Ctrl + F",25,"muted");
             var counts=new CanvasFlowPanel{Dock=DockStyle.Top,Height=35,WrapContents=false};totalLabel=new Label{AutoSize=true,Margin=new Padding(0,4,15,0),Tag="muted"};installedLabel=new Label{AutoSize=true,Margin=new Padding(0,4,15,0),Tag="muted"};foundLabel=new Label{AutoSize=true,Margin=new Padding(0,4,0,0),Tag="accent"};counts.Controls.AddRange(new Control[]{totalLabel,installedLabel,foundLabel});
             grid=new SmoothGrid{Dock=DockStyle.Fill,ReadOnly=true,AllowUserToAddRows=false,AllowUserToDeleteRows=false,AllowUserToResizeRows=false,RowHeadersVisible=false,SelectionMode=DataGridViewSelectionMode.FullRowSelect,MultiSelect=false,BorderStyle=BorderStyle.None,AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill,EnableHeadersVisualStyles=false,ColumnHeadersBorderStyle=DataGridViewHeaderBorderStyle.None,CellBorderStyle=DataGridViewCellBorderStyle.SingleHorizontal};
+            ((SmoothGrid)grid).FlatRows=true;
             AddColumn("软件 / 发布者",53,180);AddColumn("版本",15,70);AddColumn("来源",17,95);
             AddColumn("大小",15,108);
             sizeColumn=grid.Columns[grid.Columns.Count-1];
@@ -66,7 +67,7 @@ namespace CleanBox {
                 e.FormattingApplied=true;
             };
             grid.SelectionChanged+=(s,e)=>ShowSelection();grid.CellDoubleClick+=(s,e)=>{if(e.RowIndex>=0)OpenSelected();};grid.CellPainting+=PaintAppCell;grid.Sorted+=(s,e)=>ShowSelection();
-            var gridHost=new SurfacePanel{Dock=DockStyle.Fill,Padding=new Padding(10,13,10,13)};emptyList=new Label{Text="正在读取软件清单…",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,Tag="muted",Visible=false};gridHost.Controls.Add(grid);gridHost.Controls.Add(emptyList);
+            var gridHost=new SurfacePanel{Dock=DockStyle.Fill,Padding=new Padding(8,10,8,10)};emptyList=new Label{Text="正在读取软件清单…",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,Tag="muted",Visible=false};gridHost.Controls.Add(grid);gridHost.Controls.Add(emptyList);
             listCount=TextLabel("准备扫描",27,"muted");listCount.Dock=DockStyle.Bottom;
             listing.Controls.Add(gridHost);listing.Controls.Add(listCount);listing.Controls.Add(counts);listing.Controls.Add(BuildUninstallFollowup());listing.Controls.Add(summary);listing.Controls.Add(advanced);listing.Controls.Add(filters);listing.Controls.Add(searchHint);
             detailPanel=BuildDetail();detailPanel.Dock=DockStyle.Right;detailPanel.Width=292;catalogBody.Controls.Add(listing);catalogBody.Controls.Add(detailPanel);
@@ -74,15 +75,35 @@ namespace CleanBox {
         }
         void AddColumn(string title,float weight,int min){int i=grid.Columns.Add("col"+grid.Columns.Count,title);grid.Columns[i].FillWeight=weight;grid.Columns[i].MinimumWidth=min;}
         Panel BuildDetail(){
-            var p=new SurfacePanel();var title=new CanvasPanel{Dock=DockStyle.Top,Height=90,Tag="surface"};detailIcon=new PictureBox{Location=new Point(0,2),Size=new Size(40,40),SizeMode=PictureBoxSizeMode.Zoom};
-            detailTitle=new Label{Text="选择软件",Location=new Point(52,0),Size=new Size(207,47),Font=new Font(Font.FontFamily,12,FontStyle.Bold),AutoEllipsis=true,Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right};detailSubtitle=new Label{Text="查看详细信息与操作",Dock=DockStyle.Bottom,Height=32,Tag="muted",AutoEllipsis=true};title.Controls.Add(detailIcon);title.Controls.Add(detailTitle);title.Controls.Add(detailSubtitle);title.Resize+=(s,e)=>detailTitle.Width=Math.Max(10,title.Width-detailTitle.Left);
-            detail=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,BorderStyle=BorderStyle.None,Text="选择软件后，可查看位置、版本、发现来源和卸载入口。",AccessibleName="软件详细信息"};
-            var actions=new CanvasTablePanel{Dock=DockStyle.Bottom,Height=233,RowCount=5,ColumnCount=1,Padding=new Padding(0,12,0,0),Tag="surface"};actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));for(int i=0;i<5;i++)actions.RowStyles.Add(new RowStyle(SizeType.Percent,20));
+            var p=new SurfacePanel();var title=new CanvasPanel{Dock=DockStyle.Top,Height=60,Tag="surface"};detailIcon=new PictureBox{Location=new Point(0,3),Size=new Size(40,40),SizeMode=PictureBoxSizeMode.Zoom};
+            detailTitle=new Label{Text="选择软件",Location=new Point(51,0),Height=28,Font=new Font(Font.FontFamily,13,FontStyle.Bold),AutoEllipsis=true};
+            detailSubtitle=new Label{Location=new Point(51,29),Height=23,Tag="muted",AutoEllipsis=true};
+            title.Controls.Add(detailIcon);title.Controls.Add(detailTitle);title.Controls.Add(detailSubtitle);
+            title.Resize+=(s,e)=>detailTitle.Width=detailSubtitle.Width=Math.Max(10,title.Width-detailTitle.Left);
+            detailSize=TextLabel("—",42,"accent"); detailSize.Font=new Font(Font.FontFamily,21,FontStyle.Bold);
+            detail=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,BorderStyle=BorderStyle.None,AccessibleName="软件详细信息"};
+            var properties=new CanvasTablePanel{Dock=DockStyle.Top,Height=82,RowCount=3,ColumnCount=2};
+            properties.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,62));properties.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            string[] captions={"发布者","版本","来源"};
+            var values=new Label[3];
+            for(int i=0;i<captions.Length;i++){
+                properties.RowStyles.Add(new RowStyle(SizeType.Percent,100f/captions.Length));
+                var label=TextLabel(captions[i],24,"muted");label.Dock=DockStyle.Fill;
+                var value=TextLabel("—",24);value.Dock=DockStyle.Fill;
+                properties.Controls.Add(label,0,i);properties.Controls.Add(value,1,i);values[i]=value;
+            }
+            detailPublisher=values[0];detailVersion=values[1];detailSource=values[2];
+            var actions=new CanvasTablePanel{Dock=DockStyle.Bottom,Height=127,RowCount=3,ColumnCount=2,Padding=new Padding(0,8,0,0),Tag="surface"};
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            for(int i=0;i<3;i++)actions.RowStyles.Add(new RowStyle(SizeType.Percent,100f/3));
             uninstallButton=Button("正常卸载",async()=>{if(IsCandidate(Selected()))UseSelectedFolder();else await UninstallSelected();},true);openButton=Button("打开位置",OpenSelected);residualButton=Button("检查残留",ResidualDialog);var more=Button("更多操作  ▾",()=>appMenu.Show(selectionActions.Last(),new Point(0,selectionActions.Last().Height)));
             appMenu=new ContextMenuStrip();appMenu.Items.Add("处理安装目录…",null,(s,e)=>UseSelectedFolder());appMenu.Items.Add("清除失效记录…",null,async(s,e)=>await ClearRecord());
-            measureButton=Button("重新计算大小",async()=>await RemeasureSelected());
-            foreach(var b in new[]{uninstallButton,openButton,residualButton,measureButton,more}){b.Dock=DockStyle.Fill;b.AutoSize=false;b.MinimumSize=Size.Empty;b.Margin=new Padding(0,0,0,6);selectionActions.Add(b);actions.Controls.Add(b);}
-            p.Controls.Add(detail);p.Controls.Add(actions);p.Controls.Add(title);return p;
+            measureButton=Button("计算大小",async()=>await RemeasureSelected());
+            foreach(var b in new[]{uninstallButton,openButton,residualButton,measureButton,more}){b.Dock=DockStyle.Fill;b.AutoSize=false;b.MinimumSize=Size.Empty;b.Margin=new Padding(3,0,3,5);selectionActions.Add(b);}
+            actions.Controls.Add(uninstallButton,0,0);actions.SetColumnSpan(uninstallButton,2);
+            actions.Controls.Add(openButton,0,1);actions.Controls.Add(residualButton,1,1);
+            actions.Controls.Add(measureButton,0,2);actions.Controls.Add(more,1,2);
+            p.Controls.Add(detail);p.Controls.Add(actions);p.Controls.Add(properties);p.Controls.Add(detailSize);p.Controls.Add(title);return p;
         }
         Panel BuildFiles(){
             var p=Page();var heading=Heading("文件解锁","找到占用它的程序，再处理文件");heading.Height=68;var stepBar=new CanvasTablePanel{Dock=DockStyle.Top,Height=38,ColumnCount=3};steps=new Label[3];string[] captions={"1   选择文件","2   检查并解除占用","3   确认删除"};for(int i=0;i<3;i++){stepBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,33.33f));steps[i]=new Label{Text=captions[i],Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,Tag="muted"};stepBar.Controls.Add(steps[i],i,0);}

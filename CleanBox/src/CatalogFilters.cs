@@ -118,14 +118,15 @@ namespace CleanBox {
             return choice == null || choice.SelectedIndex <= 0 ? null : choice.Items[choice.SelectedIndex].ToString();
         }
 
-        bool MatchesAdvanced(AppEntry app) {
-            if (kindFilter == null) return true;
+        Func<AppEntry,bool> CaptureAdvancedFilter() {
+            if (kindFilter == null) return app => true;
             int kind = kindFilter.SelectedIndex;
             string publisher = ChoiceValue(publisherFilter), drive = ChoiceValue(driveFilter);
-            return (kind <= 0 || CatalogClassification.Kind(app) == kind)
+            int size = sizeFilter == null ? 0 : sizeFilter.SelectedIndex;
+            return app => (kind <= 0 || CatalogClassification.Kind(app) == kind)
                 && (publisher == null || CatalogClassification.Publisher(app).Equals(publisher, StringComparison.OrdinalIgnoreCase))
                 && (drive == null || CatalogClassification.Drive(app) == drive)
-                && MatchesSize(app, sizeFilter == null ? 0 : sizeFilter.SelectedIndex);
+                && MatchesSize(app, size);
         }
 
         internal static bool MatchesSize(AppEntry app, int range) {

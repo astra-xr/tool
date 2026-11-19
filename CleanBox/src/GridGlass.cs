@@ -12,6 +12,7 @@ namespace CleanBox {
         Bitmap material,frosted,rowFrame;Point materialOrigin,lastPointer;Size canvasSize;
         bool materialDark,frameDirty=true,pointerInside;int lightRow=-2;float materialDpi=1;
         internal int MaterialGeneration{get;private set;}
+        internal bool FlatRows { get; set; }
         public SmoothGrid(){DoubleBuffered=true;}
         Point CanvasOrigin(){Point p=Point.Empty;for(Control c=this;c!=null&&!(c is Form);c=c.Parent)p.Offset(c.Left,c.Top);return p;}
         int ContentRight{get{int right=ClientSize.Width;foreach(Control c in Controls)if(c is VScrollBar&&c.Visible)right=Math.Min(right,c.Left);return right;}}
@@ -67,12 +68,12 @@ namespace CleanBox {
         internal void RefreshMaterial(){ClearMaterial();pointerInside=false;lightRow=-2;Settle();MotionClock.Remove(this);}
         protected override void OnPaint(PaintEventArgs e){frameDirty=true;base.OnPaint(e);}
         protected override void PaintBackground(Graphics g,Rectangle clipBounds,Rectangle gridBounds){
-            if(!Palette.Glass){base.PaintBackground(g,clipBounds,gridBounds);return;}
+            if(FlatRows||!Palette.Glass){base.PaintBackground(g,clipBounds,gridBounds);return;}
             EnsureFrame();if(rowFrame==null)return;
             var state=g.Save();g.SetClip(clipBounds,CombineMode.Intersect);g.DrawImageUnscaled(rowFrame,Point.Empty);g.Restore(state);
         }
         protected override void OnCellPainting(DataGridViewCellPaintingEventArgs e){
-            if(!Palette.Glass||e.ColumnIndex<0){base.OnCellPainting(e);return;}
+            if(FlatRows||!Palette.Glass||e.ColumnIndex<0){base.OnCellPainting(e);return;}
             EnsureFrame();if(rowFrame==null){base.OnCellPainting(e);return;}
             var g=e.Graphics;var state=g.Save();
             try{
@@ -85,6 +86,7 @@ namespace CleanBox {
             }finally{g.Restore(state);}
         }
         internal void MoveLight(Point point){
+            if(FlatRows)return;
             lastPointer=point;var hit=HitTest(point.X,point.Y);
             bool inside=Palette.Glass&&(hit.Type==DataGridViewHitTestType.Cell||hit.Type==DataGridViewHitTestType.ColumnHeader)&&ContainsCard(hit.RowIndex,point);
             if(!inside){LeaveLight();return;}
@@ -92,11 +94,11 @@ namespace CleanBox {
             else if(!pointerInside&&lightAmount.Value<=.001){lightX.Snap(point.X);lightY.Snap(point.Y);}
             pointerInside=true;lightX.Target=point.X;lightY.Target=point.Y;lightAmount.Target=1;MotionClock.Wake(this);
         }
-        internal void LeaveLight(){pointerInside=false;lightAmount.Target=0;MotionClock.Wake(this);}
+        internal void LeaveLight(){if(FlatRows)return;pointerInside=false;lightAmount.Target=0;MotionClock.Wake(this);}
         protected override void OnMouseMove(MouseEventArgs e){MoveLight(e.Location);base.OnMouseMove(e);}
         protected override void OnMouseLeave(EventArgs e){LeaveLight();base.OnMouseLeave(e);}
         // Re-evaluate the row below the stationary pointer when content scrolls.
-        protected override void OnScroll(ScrollEventArgs e){base.OnScroll(e);frameDirty=true;if(pointerInside)MoveLight(lastPointer);if(Palette.Glass)Invalidate();}
+        protected override void OnScroll(ScrollEventArgs e){base.OnScroll(e);frameDirty=true;if(pointerInside)MoveLight(lastPointer);if(Palette.Glass&&!FlatRows)Invalidate();}
         protected override void OnVisibleChanged(EventArgs e){if(!Visible){pointerInside=false;Settle();MotionClock.Remove(this);}base.OnVisibleChanged(e);}
         public Control MotionControl{get{return this;}}
         public bool Advance(double seconds){bool moving=lightAmount.Step(seconds);moving=lightX.Step(seconds)||moving;moving=lightY.Step(seconds)||moving;frameDirty=true;Invalidate();return moving;}

@@ -14,9 +14,37 @@ namespace CleanBox {
         bool Idle(){if(!working)return true;MessageBox.Show(this,"请先等待当前操作完成，或取消扫描。","正在处理");return false;}
         void Busy(bool value,bool cancellable=false){working=value;quick.Enabled=disk.Enabled=folder.Enabled=!value;cancel.Enabled=value&&cancellable;cancel.Visible=value&&cancellable;progress.Visible=value;adminButton.Enabled=!value&&!Native.IsAdmin;UpdateFileActions();UpdateUsageActions();ShowSelection();UpdateCounts();}
         async Task RunScan(Action<CancellationToken> action,string finished){if(!Idle())return;cts=new CancellationTokenSource();Busy(true,true);try{await Task.Run(()=>action(cts.Token));DrainAll();latestStatus=finished+" · "+apps.Count+" 条";Store.Log(latestStatus);}catch(OperationCanceledException){DrainAll();latestStatus="已停止，保留已发现的 "+apps.Count+" 条结果。";}catch(Exception e){ShowError(e);}finally{Busy(false);cts.Dispose();cts=null;}}
-        async Task QuickScan(){if(!Idle())return;apps.Clear();ids.Clear();RebuildCatalogIndex();grid.Rows.Clear();
-            ShowSelection();await RunScan(token=>{Scanner.Registered(queue.Enqueue,s=>latestStatus=s,token);try{Scanner.Packages(queue.Enqueue,s=>latestStatus=s,token);}catch(OperationCanceledException){throw;}catch(Exception e){Store.Log("商店应用未能完整读取："+e.Message);}
-                Scanner.Shortcuts(queue.Enqueue,s=>latestStatus=s,token);},"基础扫描完成；可用“全盘发现”补充绿色软件。详情见操作记录");}
+        async Task QuickScan() {
+            if (!Idle()) return;
+            var previous = apps.ToArray();
+            cts = new CancellationTokenSource();
+            var token = cts.Token;
+            Busy(true, true);
+            try {
+                var fresh = await Task.Run(() => {
+                    var entries = new List<AppEntry>();
+                    Scanner.Registered(entries.Add, s => latestStatus = s, token);
+                    try { Scanner.Packages(entries.Add, s => latestStatus = s, token); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) {
+                        entries.AddRange(previous.Where(app => app.Package.Length > 0));
+                        Store.Log("商店应用未能完整读取：" + ex.Message);
+                    }
+                    Scanner.Shortcuts(entries.Add, s => latestStatus = s, token);
+                    foreach (var app in previous.Where(app => app.Source.StartsWith("磁盘", StringComparison.Ordinal))) {
+                        token.ThrowIfCancellationRequested();
+                        if (!Scanner.IsMissingLocalPath(app.Executable)) entries.Add(app);
+                    }
+                    return entries;
+                });
+                token.ThrowIfCancellationRequested();
+                ReplaceCatalog(fresh);
+                latestStatus = "基础扫描完成 · " + apps.Count + " 条";
+                Store.Log(latestStatus);
+            } catch (OperationCanceledException) { latestStatus = "已取消刷新，保留上次清单。"; }
+            catch (Exception ex) { ShowError(ex); }
+            finally { Busy(false); cts.Dispose(); cts = null; }
+        }
         async Task ChooseFolder(){if(!Idle())return;using(var f=new FolderBrowserDialog{Description="选择软件存放目录，将递归发现 EXE 程序（只读扫描）",SelectedPath=Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),ShowNewFolderButton=false})if(f.ShowDialog(this)==DialogResult.OK){string root=f.SelectedPath;await RunScan(t=>Scanner.Disk(root,queue.Enqueue,s=>latestStatus=s,t),"目录扫描完成");}}
         async Task ChooseDrives(){if(!Idle())return;using(var f=new Form{Text="选择磁盘扫描范围",ClientSize=new Size(540,350),StartPosition=FormStartPosition.CenterParent,Font=Font,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false}){
             var list=new CheckedListBox{Dock=DockStyle.Fill,CheckOnClick=true};foreach(var drive in DriveInfo.GetDrives().Where(d=>d.IsReady&&d.DriveType==DriveType.Fixed))list.Items.Add(drive.RootDirectory.FullName,true);
@@ -43,7 +71,7 @@ namespace CleanBox {
         async Task UninstallSelected(){if(!Idle())return;var a=Selected();if(a==null||a.NeedsRegistrationReview)return;if(a.Protected){MessageBox.Show(this,"此项是系统组件，本工具不执行卸载。","受保护项目");return;}
             if(!Confirm("正常卸载",a.Name+"\r\n\r\n"+(a.Package.Length>0?"仅卸载当前用户的软件包：\r\n"+a.Package:"即将启动软件登记的卸载程序：\r\n"+a.Command),false))return;
             Busy(true);bool launched=false;try{await Task.Run(()=>Operations.Uninstall(a));launched=true;RememberUninstall(a,replaceExisting:true);latestStatus="卸载已启动，完成后请核对结果与残留。";}catch(Exception e){ShowError(e);}finally{Busy(false);}if(launched)ShowResidualReview(a,true);}
-        async Task ClearRecord(){if(!Idle())return;var a=Selected();if(a==null)return;if(!Confirm("清除失效记录",a.Name+"\r\n"+a.Hive+"\\"+a.RegistryPath+"\r\n\r\n仅清理不存在的软件留下的卸载列表项，先导出备份；不扫描删除其他注册表键。",true))return;
+        async Task ClearRecord(){if(!Idle())return;var a=Selected();if(a==null||a.Registration!=RegistryStatus.Stale)return;if(!Confirm("清除失效记录",a.Name+"\r\n"+a.Hive+"\\"+a.RegistryPath+"\r\n\r\n清理这条失效的卸载登记前会导出备份。",true))return;
             Busy(true);try{await Task.Run(()=>Operations.RemoveStaleRecord(a));if(UpdateCatalogRegistration(a,RegistrationState.Missing)){RebuildCatalogIndex();ApplyFilter();}MessageBox.Show(this,"失效记录已删除，软件清单已更新。备份保存在 data 目录。","完成");}catch(Exception e){ShowError(e);}finally{Busy(false);}}
         void Export(){ApplyFilter();using(var f=new SaveFileDialog{Title="导出当前筛选结果",Filter="CSV 表格|*.csv",FileName="软件清单-"+DateTime.Now.ToString("yyyyMMdd")+".csv",InitialDirectory=Store.Home})if(f.ShowDialog(this)==DialogResult.OK)try{Store.Export(grid.Rows.Cast<DataGridViewRow>().Where(r=>r.Visible).Select(r=>(AppEntry)r.Tag),f.FileName);latestStatus="清单已导出："+f.FileName;}catch(Exception e){ShowError(e);}}
         void ResidualDialog(){if(!Idle())return;var app=Selected();if(app!=null&&!app.Protected)ShowResidualReview(app,false);}
@@ -62,11 +90,9 @@ namespace CleanBox {
                 lockSize.Text="目标大小："+size;
                 foreach(var o in report.Owners)lockList.Items.Add(o);
                 if(lockList.Items.Count>0)lockList.SelectedIndex=0;
-                int confirmed=report.Owners.Count(owner=>owner.Confirmed);
-                lockSummary.Text="检查 "+report.Files+" 个文件 · 确认占用 "+confirmed+" · 仅供排查 "+(report.Owners.Count-confirmed)
-                    +(report.Partial?" · 部分结果":"")+"\r\n"+(report.Note.Length>0?report.Note:"从目标运行的进程仅供排查。文件夹句柄、驱动占用或权限受限的情况可能无法识别。");
+                lockSummary.Text=DescribeLocks(report);
                 tips.SetToolTip(lockSummary,lockSummary.Text);
-                SetStep(report.Owners.Count>0?1:2);
+                SetStep(report.Partial||report.Owners.Count>0?1:2);
                 latestStatus=report.Partial?"占用检查部分完成，详情见当前页面":"占用检查完成";
                 Store.Log(latestStatus+"："+lockPath+"；相关进程 "+report.Owners.Count+(report.Note.Length>0?"\n"+report.Note:""));
             } catch(OperationCanceledException) {
@@ -74,6 +100,13 @@ namespace CleanBox {
             } catch(Exception e) {
                 lockSize.Text="目标大小：未能读取";ShowError(e);lockSummary.Text="检查失败，请查看操作记录。";SetStep(0);
             } finally {Busy(false);cts.Dispose();cts=null;}
+        }
+        internal static string DescribeLocks(LockReport report) {
+            int confirmed=report.Owners.Count(owner=>owner.Confirmed);
+            string title=report.Partial?(confirmed==0?"暂无法确认占用":"已确认部分占用")
+                :(confirmed==0?"未发现已确认的占用":"发现文件占用");
+            return title+" · 检查 "+report.Files+" 个文件 · 确认 "+confirmed+" · 线索 "+(report.Owners.Count-confirmed)
+                +"\r\n"+(report.Note.Length>0?report.Note:"从目标运行的进程仅供排查。部分文件夹句柄、驱动和权限限制可能影响检测。");
         }
         async Task StopOwner(bool force){if(!Idle())return;var owner=lockList.SelectedItem as LockOwner;if(owner==null)return;if(!owner.CanStop){MessageBox.Show(this,"该进程属于系统或无法核实身份。可手动退出软件，或对具体文件选择重启后删除。","不能结束此进程");return;}
             if(!Confirm(force?"强制结束进程":"请求正常退出",owner.Display+"\r\n"+owner.Path+(force?"\r\n\r\n该程序尚未保存的内容会丢失。":"\r\n\r\n程序可能会弹出保存提示。"),force))return;
@@ -94,14 +127,14 @@ namespace CleanBox {
                 : mode == 1 ? "目标及其全部内容将被永久删除。"
                 : "已登记的路径将在下次系统重启时尝试永久删除。请在重启后核对结果。";
             latestStatus = "清理预览已生成。";
-            if (!Confirm(title, plan.Preview + "\r\n\r\n" + explanation + "\r\n\r\n请核对目标与处理范围。", mode != 0)) {
+            if (!Confirm(title, plan.Preview + "\r\n\r\n" + explanation + "\r\n\r\n请核对目标与处理范围。", mode != 0, plan)) {
                 latestStatus = "已取消清理。"; return;
             }
             Busy(true); latestStatus = "正在" + title + "…";
             try {
                 DeleteResult result = mode == 0 ? await RecycleInBackground(plan)
                     : await Task.Run(() => mode == 1 ? Operations.Permanent(plan) : Operations.Reboot(plan));
-                if (mode != 2 && result.Done > 0) {
+                if (mode != 2 && (result.Done > 0 || result.Skipped > 0)) {
                     try { await RefreshCatalogAfterCleanup(plan.Root); }
                     catch (Exception ex) { Store.Log("软件清单刷新失败，可按 F5 重新扫描。" + ex.Message); }
                 }
@@ -156,15 +189,17 @@ namespace CleanBox {
                 dialog.ShowDialog(owner);
             }
         }
-        bool Confirm(string title,string body,bool typeWord){using(var f=BuildConfirmation(title,body,typeWord))return f.ShowDialog(this)==DialogResult.OK;}
-        Form BuildConfirmation(string title,string body,bool typeWord){
+        bool Confirm(string title,string body,bool typeWord,CleanupPlan plan=null){using(var f=BuildConfirmation(title,body,typeWord,plan))return f.ShowDialog(this)==DialogResult.OK;}
+        Form BuildConfirmation(string title,string body,bool typeWord,CleanupPlan plan=null){
             var f=new Form{Text=title,ClientSize=new Size(640,typeWord?430:360),StartPosition=FormStartPosition.CenterParent,Font=Font,AutoScaleMode=AutoScaleMode.None,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,Padding=new Padding(22)};f.SuspendLayout();
             var heading=new Label{Text=title,Dock=DockStyle.Top,Height=48,Font=new Font(Font.FontFamily,16,FontStyle.Bold),AutoEllipsis=true};
             var target=new TextBox{Name="confirmationTarget",Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,Text=body,BorderStyle=BorderStyle.None};
             var bottom=new FlowLayoutPanel{Dock=DockStyle.Bottom,Height=50,Padding=new Padding(0,10,0,0),FlowDirection=FlowDirection.RightToLeft};
             var yes=new UiButton{Name="confirmationAccept",Text="确认继续",Kind=typeWord?"danger":"primary",Width=122,Height=36,DialogResult=DialogResult.OK,Enabled=!typeWord,Margin=new Padding(8,0,0,0)};
             var no=new UiButton{Name="confirmationCancel",Text="取消",Width=100,Height=36,DialogResult=DialogResult.Cancel,Margin=new Padding(8,0,0,0)};bottom.Controls.Add(no);bottom.Controls.Add(yes);f.CancelButton=no;
-            f.Controls.Add(target);if(typeWord){var entry=new Panel{Dock=DockStyle.Bottom,Height=64,Padding=new Padding(0,5,0,0)};var label=new Label{Text="输入“确认”以继续",Dock=DockStyle.Top,Height=27,Tag="muted"};var word=new TextBox{Name="confirmationWord",Dock=DockStyle.Top};word.TextChanged+=(s,e)=>yes.Enabled=word.Text=="确认";entry.Controls.Add(word);entry.Controls.Add(label);f.Controls.Add(entry);}
+            f.Controls.Add(target);
+            if(plan!=null){f.ClientSize=new Size(720,f.ClientSize.Height+38);f.Controls.Add(BuildCleanupContents(f,plan));}
+            if(typeWord){var entry=new Panel{Dock=DockStyle.Bottom,Height=64,Padding=new Padding(0,5,0,0)};var label=new Label{Text="输入“确认”以继续",Dock=DockStyle.Top,Height=27,Tag="muted"};var word=new TextBox{Name="confirmationWord",Dock=DockStyle.Top};word.TextChanged+=(s,e)=>yes.Enabled=word.Text=="确认";entry.Controls.Add(word);entry.Controls.Add(label);f.Controls.Add(entry);}
             f.Controls.Add(bottom);f.Controls.Add(heading);ApplyTheme(f);if(dpiScale!=1)f.Scale(new SizeF(dpiScale,dpiScale));f.ResumeLayout(true);f.Shown+=(s,e)=>no.Focus();return f;
         }
         void Elevate(){if(!Idle())return;try{string target=string.IsNullOrWhiteSpace(pathBox.Text)?"":Safety.Normalize(pathBox.Text);Process.Start(new ProcessStartInfo(Application.ExecutablePath,target.Length>0?"--target "+PathArgument(target):""){UseShellExecute=true,Verb="runas",WorkingDirectory=Store.Home});Close();}catch(Exception e){ShowError(e);}}

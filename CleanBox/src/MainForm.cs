@@ -19,6 +19,7 @@ namespace CleanBox {
         readonly List<Button> selectionActions=new List<Button>();readonly ToolTip tips=new ToolTip{AutoPopDelay=15000,InitialDelay=450};
         DataGridView grid;TextBox search,detail,pathBox,logBox;ChoiceButton filter;Label status,totalLabel,installedLabel,foundLabel,lockSummary,lockSize,detailTitle,detailSubtitle,listCount,emptyList,stepLabel,dropText;
         DataGridViewColumn sizeColumn;
+        Label detailSize, detailPublisher, detailVersion, detailSource;
         Label[] steps;ListBox lockList;Button quick,disk,folder,cancel,adminButton,uninstallButton,openButton,residualButton,inspectButton,stopButton,recycleButton,fileMore,themeButton,densityButton,glassButton,motionButton;
         GlassProgress progress;Panel host,sidebar,catalogBody,detailPanel,dropZone;Panel[] pages;UiButton[] navigation;PictureBox detailIcon;ContextMenuStrip scanMenu,appMenu,fileMenu;
         CancellationTokenSource cts;bool working,compact,closing,loadingPreferences=true;volatile string latestStatus="准备就绪";System.Windows.Forms.Timer timer;string lockPath="";int currentPage;float dpiScale=1;
@@ -48,29 +49,70 @@ namespace CleanBox {
         void SetStep(int step){if(steps==null)return;for(int i=0;i<steps.Length;i++){steps[i].ForeColor=i==step?Teal:Muted;}}
         void UpdateFileActions(){if(inspectButton==null||pathBox==null||stopButton==null)return;bool target=!string.IsNullOrWhiteSpace(pathBox.Text);var owner=lockList.SelectedItem as LockOwner;inspectButton.Enabled=target&&!working;stopButton.Enabled=!working&&owner!=null&&owner.CanStop&&lockPath.Length>0;recycleButton.Enabled=target&&!working;fileMore.Enabled=target&&!working;pathBox.ReadOnly=working;if(fileMenu!=null)fileMenu.Items[0].Enabled=stopButton.Enabled;}
         void OnLog(string s){logs.Enqueue(s);}
-        void Drain(){AppEntry a;int n=0;bool added=false;while(n++<200&&queue.TryDequeue(out a)){Add(a);added=true;}if(status.Text!=latestStatus){status.Text=latestStatus;tips.SetToolTip(status,latestStatus);}string l;while(logs.TryDequeue(out l)){if(logBox.TextLength>150000)logBox.Text=logBox.Text.Substring(logBox.TextLength-100000);logBox.AppendText(l+Environment.NewLine);}if(added)UpdateCounts();}
+        void Drain(){
+            if(!queue.IsEmpty){
+                var rows=new List<DataGridViewRow>();var matches=CaptureCatalogFilter();AppEntry a;
+                for(int n=0;n<200&&queue.TryDequeue(out a);n++){
+                    var row=CreateCatalogRow(a,matches);
+                    if(row!=null)rows.Add(row);
+                }
+                if(rows.Count>0){
+                    EditCatalogGrid(()=>grid.Rows.AddRange(rows.ToArray()));
+                    ShowSelection();UpdateCounts();
+                }
+            }
+            if(status.Text!=latestStatus){status.Text=latestStatus;tips.SetToolTip(status,latestStatus);}
+            string l;while(logs.TryDequeue(out l)){if(logBox.TextLength>150000)logBox.Text=logBox.Text.Substring(logBox.TextLength-100000);logBox.AppendText(l+Environment.NewLine);}
+        }
         void DrainAll(){while(!queue.IsEmpty)Drain();if(grid.SortedColumn!=null)grid.Sort(grid.SortedColumn,grid.SortOrder==SortOrder.Descending?System.ComponentModel.ListSortDirection.Descending:System.ComponentModel.ListSortDirection.Ascending);ApplyFilter();if(advancedFilters.Visible)RefreshFilterChoices();}
         void UpdateCounts(){int review=apps.Count(a=>a.NeedsRegistrationReview), total=apps.Count-review;
             totalLabel.Text="全部 "+total;installedLabel.Text="已登记 "+apps.Count(x=>!x.NeedsRegistrationReview&&(x.RegistryPath.Length>0||x.Package.Length>0));foundLabel.Text="待核对 "+apps.Count(IsCandidate);
-            int count=grid.Rows.Cast<DataGridViewRow>().Count(r=>r.Visible);listCount.Text="显示 "+count+" / "+(filter.SelectedIndex==RegistryReviewFilter?review:total)+" 项  ·  双击打开位置";emptyList.Visible=count==0;emptyList.Text=working?"正在读取软件清单…":"没有匹配的软件\r\n可更换关键词、来源筛选或重新扫描";if(emptyList.Visible)emptyList.BringToFront();else grid.BringToFront();}
-        void Add(AppEntry a){if(!AcceptCatalogEntry(a))return;catalogState.RestoreMeasurement(a);IndexCatalogEntry(a);
-            ids.Add(a.Id);apps.Add(a);int i=grid.Rows.Add(a.Name,a.Version,CatalogSource(a),a.SizeBytes);var row=grid.Rows[i];row.Tag=a;row.Height=Px(compact?44:57);row.Cells[0].ToolTipText=a.Name+"\r\n"+a.Publisher;row.Cells[2].ToolTipText=a.DisplaySource;
+            int count=grid.Rows.GetRowCount(DataGridViewElementStates.Visible);listCount.Text="显示 "+count+" / "+(filter.SelectedIndex==RegistryReviewFilter?review:total)+" 项  ·  双击打开位置";emptyList.Visible=count==0;emptyList.Text=working?"正在读取软件清单…":"没有匹配的软件\r\n可更换关键词、来源筛选或重新扫描";
+            Control front=count==0?(Control)emptyList:grid;if(front.Parent.Controls.GetChildIndex(front)!=0)front.BringToFront();}
+        DataGridViewRow CreateCatalogRow(AppEntry a, Func<AppEntry,bool> matches) {
+            if(!AcceptCatalogEntry(a))return null;
+            catalogState.RestoreMeasurement(a); IndexCatalogEntry(a);
+            ids.Add(a.Id); apps.Add(a);
+            a.SearchText = string.Join(" ", a.Name, a.Publisher, a.Path, a.Executable);
+            var row = new DataGridViewRow(); row.CreateCells(grid, a.Name, a.Version, CatalogSource(a), a.SizeBytes);
+            row.Tag=a;row.Height=Px(compact?42:48);row.Cells[0].ToolTipText=a.Name+"\r\n"+a.Publisher;row.Cells[2].ToolTipText=a.DisplaySource;
             row.Cells[sizeColumn.Index].ToolTipText=a.SizeBadge+"\r\n"+a.SizeExplanation;
-            if(!Matches(a)){if(row.IsNewRow)return;if(grid.CurrentCell!=null&&grid.CurrentCell.RowIndex==i)grid.CurrentCell=null;row.Visible=false;}if(row.Selected)ShowSelection();
+            row.Visible=matches(a);
+            return row;
+        }
+        void Add(AppEntry a) {
+            var row = CreateCatalogRow(a, CaptureCatalogFilter());
+            if (row != null) grid.Rows.Add(row);
         }
         string CatalogSource(AppEntry a){return a.NeedsRegistrationReview?a.RegistrationLabel:a.Protected?"系统组件":IsCandidate(a)?"绿色候选":a.Package.Length>0?"应用商店":"已安装";}
-        bool Matches(AppEntry a){if(a==null)return false;string term=appliedSearch;int category=filter.SelectedIndex;
-            if(a.NeedsRegistrationReview!=(category==RegistryReviewFilter))return false;
-            bool type=category==RegistryReviewFilter||category==0||(category==1&&a.RegistryPath.Length>0)||(category==2&&a.Package.Length>0)||(category==3&&IsCandidate(a))||(category==4&&a.Source.StartsWith("快捷"))||(category==5&&a.Source.StartsWith("磁盘"));return type&&MatchesAdvanced(a)&&(term.Length==0||(a.Name+" "+a.Publisher+" "+a.Path+" "+a.Executable).IndexOf(term,StringComparison.OrdinalIgnoreCase)>=0);}
+        Func<AppEntry,bool> CaptureCatalogFilter() {
+            string term = appliedSearch;
+            int category = filter.SelectedIndex;
+            var advanced = CaptureAdvancedFilter();
+            return a => {
+                if (a == null || a.NeedsRegistrationReview != (category == RegistryReviewFilter)) return false;
+                bool type = category == RegistryReviewFilter || category == 0 || (category == 1 && a.RegistryPath.Length > 0)
+                    || (category == 2 && a.Package.Length > 0) || (category == 3 && IsCandidate(a))
+                    || (category == 4 && a.Source.StartsWith("快捷")) || (category == 5 && a.Source.StartsWith("磁盘"));
+                return type && (term.Length == 0 || a.SearchText.IndexOf(term,StringComparison.OrdinalIgnoreCase)>=0) && advanced(a);
+            };
+        }
         AppEntry Selected(){return grid.SelectedRows.Count>0&&grid.SelectedRows[0].Visible?grid.SelectedRows[0].Tag as AppEntry:null;}
         void ShowSelection(){if(detail==null||changingCatalog)return;var a=Selected();foreach(var b in selectionActions)b.Enabled=a!=null&&!working;
-            if(a==null){detailTitle.Text="选择软件";detailSubtitle.Text="查看详细信息与操作";detailIcon.Image=null;detail.Text="选择列表中的软件，查看版本、位置和操作入口。";return;}
+            if(a==null){detailTitle.Text="选择软件";detailSubtitle.Text="";detailIcon.Image=null;
+                detailSize.Text=detailPublisher.Text=detailVersion.Text=detailSource.Text="—";
+                detail.Text="选择软件后可查看安装位置和卸载入口。";return;}
             bool candidate=IsCandidate(a);detailTitle.Text=a.Name;tips.SetToolTip(detailTitle,a.Name);detailSubtitle.Text=a.Protected?"系统组件 · 已保护":candidate?"绿色软件候选 · 需要核对":CatalogSource(a);
-            string size=a.SizeBytes.HasValue?FileSizes.Format(a.SizeBytes.Value)+"（"+a.SizeSource+"）":"未提供";
-            if(a.SizePartial&&a.SizeBytes.HasValue)size="至少 "+size;
-            if(a.SizeKind==AppSizeKind.EngineLauncher)size+="\r\n引擎内的应用本体和缓存未计入。";size+="\r\n"+a.SizeExplanation;if(a.SizeMeasuredUtc!=DateTime.MinValue)size+="\r\n实测时间："+a.SizeMeasuredUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
-            detail.Text="大小\r\n"+size+"\r\n\r\n发布者\r\n"+(a.Publisher.Length>0?a.Publisher:"未提供")+"\r\n\r\n版本\r\n"+(a.Version.Length>0?a.Version:"未提供")+"\r\n\r\n发现来源\r\n"+a.DisplaySource+"\r\n\r\n位置（请核对）\r\n"+(a.Path.Length>0?a.Path:"未提供")+"\r\n\r\n"+(a.Package.Length>0?"软件包\r\n"+a.Package:"卸载入口\r\n"+(a.Command.Length>0?a.Command:candidate?"未登记；仅发现程序文件或快捷方式":"未提供"));
-            uninstallButton.Text=a.Protected?"系统组件 · 已保护":candidate?"核对并处理目录":"正常卸载";uninstallButton.Enabled=!working&&!a.Protected&&!a.NeedsRegistrationReview&&(candidate?a.Path.Length>0:a.Command.Length>0||a.Package.Length>0);openButton.Enabled=!working&&(a.Path.Length>0||a.Executable.Length>0);residualButton.Enabled=!working&&!a.Protected;appMenu.Items[0].Enabled=!working&&!a.Protected&&a.Path.Length>0;appMenu.Items[1].Enabled=!working&&!a.Protected&&a.RegistryPath.Length>0;
+            string size=a.SizeBytes.HasValue?a.SizeSource+"\r\n":"";
+            if(a.SizeKind==AppSizeKind.EngineLauncher)size+="引擎内的应用本体和缓存未计入。\r\n";
+            size+=a.SizeExplanation;if(a.SizeMeasuredUtc!=DateTime.MinValue)size+="\r\n实测时间："+a.SizeMeasuredUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+            detailSize.Text=a.SizeBytes.HasValue?(a.SizePartial?"≥ ":"")+FileSizes.Format(a.SizeBytes.Value):"大小未读取";
+            detailPublisher.Text=a.Publisher.Length>0?a.Publisher:"未提供";
+            detailVersion.Text=a.Version.Length>0?a.Version:"未提供";
+            detailSource.Text=a.DisplaySource;
+            foreach (var label in new[] { detailPublisher, detailVersion, detailSource }) tips.SetToolTip(label,label.Text);
+            detail.Text=size+"\r\n\r\n安装位置\r\n"+(a.Path.Length>0?a.Path:"未提供")+"\r\n\r\n"+(a.Package.Length>0?"软件包\r\n"+a.Package:"卸载入口\r\n"+(a.Command.Length>0?a.Command:"未提供"));
+            uninstallButton.Text=a.Protected?"系统组件 · 已保护":candidate?"核对并处理目录":"正常卸载";uninstallButton.Enabled=!working&&!a.Protected&&!a.NeedsRegistrationReview&&(candidate?a.Path.Length>0:a.Command.Length>0||a.Package.Length>0);openButton.Enabled=!working&&(a.Path.Length>0||a.Executable.Length>0);residualButton.Enabled=!working&&!a.Protected;appMenu.Items[0].Enabled=!working&&!a.Protected&&a.Path.Length>0;appMenu.Items[1].Enabled=!working&&a.Registration==RegistryStatus.Stale;
             measureButton.Enabled=!working&&!a.Protected&&!a.NeedsRegistrationReview;Image img;detailIcon.Image=appIcons.TryGetValue(a.Id,out img)?img:null;RequestIcon(a);
         }
     }

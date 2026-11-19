@@ -13,6 +13,7 @@ namespace CleanBox {
         TextBox usageTarget;
         ChoiceButton usageDrive;
         Label usageSummary, usageLocation, usageDetail;
+        FlowLayoutPanel usageBreadcrumbs;
         Button usageStart, usageFolder, usageUp, usageTop, usageOpen, usageTransfer, usagePrevious, usageNext;
         Button usageSaveSnapshot, usageCompareSnapshot;
         UsageResult usageResult;
@@ -47,6 +48,8 @@ namespace CleanBox {
             targetRow.Controls.Add(usageDrive, 0, 0); targetRow.Controls.Add(Input(usageTarget, new Padding(10,3,10,3)), 1, 0); targetRow.Controls.Add(usageFolder, 2, 0);
             usageSummary = TextLabel("选择磁盘或文件夹后开始分析。可取消并保留已扫描的结果。", 52, "muted");
             usageLocation = TextLabel("尚未分析", 28, "accent");
+            usageBreadcrumbs = new CanvasFlowPanel { Dock = DockStyle.Top, Height = 34, WrapContents = false,
+                AccessibleName = "当前目录及其上级", Visible = false };
             var navigationBar = Bar(46);
             usageUp = Button("上一级", () => { if (usageCurrent != null && usageCurrent.Parent != null) ShowUsageDirectory(usageCurrent.Parent); });
             usageTop = Button("大文件 Top 200", () => { if (usageResult == null) return; usageLargest = true; usagePage = 0; RefreshUsageRows(); });
@@ -60,10 +63,13 @@ namespace CleanBox {
                 BorderStyle = BorderStyle.None, CellBorderStyle = DataGridViewCellBorderStyle.None, EnableHeadersVisualStyles = false,
                 ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None };
             usageGrid.Columns.Add("name", "名称 / 双击进入目录"); usageGrid.Columns.Add("size", "已统计大小 ↓"); usageGrid.Columns.Add("kind", "类型 / 状态");
+            usageGrid.Columns.Add("share", "占比");
+            usageGrid.FlatRows = true;
             usageGrid.Columns[0].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
             foreach (DataGridViewColumn column in usageGrid.Columns) column.SortMode = DataGridViewColumnSortMode.NotSortable;
             usageGrid.CellDoubleClick += (s, e) => { var item = SelectedUsage(); if (e.RowIndex >= 0 && item != null && item.Directory && !item.Link) ShowUsageDirectory(item); };
             usageGrid.SelectionChanged += (s, e) => UpdateUsageActions();
+            usageGrid.CellPainting += PaintUsageShare;
             var surface = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(10) }; surface.Controls.Add(usageGrid);
             usageDetail = new Label { Dock = DockStyle.Bottom, Height = 64, AutoEllipsis = true, Tag = "muted", Text = "选择条目查看完整路径与统计范围。" };
             var actions = Bar(48); actions.Dock = DockStyle.Bottom;
@@ -73,7 +79,7 @@ namespace CleanBox {
             usageNext = Button("下一页", () => { usagePage++; RefreshUsageRows(); });
             actions.Controls.AddRange(new Control[] { usageOpen, usageTransfer, usagePrevious, usageNext });
             page.Controls.Add(surface); page.Controls.Add(usageDetail); page.Controls.Add(actions);
-            page.Controls.Add(usageLocation); page.Controls.Add(navigationBar); page.Controls.Add(usageSummary); page.Controls.Add(targetRow); page.Controls.Add(heading);
+            page.Controls.Add(usageLocation); page.Controls.Add(usageBreadcrumbs); page.Controls.Add(navigationBar); page.Controls.Add(usageSummary); page.Controls.Add(targetRow); page.Controls.Add(heading);
             UpdateUsageActions(); return page;
         }
 
@@ -82,8 +88,8 @@ namespace CleanBox {
             usageGrid.BackgroundColor = Palette.Surface;
             usageGrid.DefaultCellStyle = new DataGridViewCellStyle { BackColor = Palette.Surface, ForeColor = Ink, SelectionBackColor = Palette.Soft, SelectionForeColor = Ink, Padding = new Padding(Px(10),0,Px(6),0) };
             usageGrid.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle { BackColor = Palette.Side, ForeColor = Muted, SelectionBackColor = Palette.Side, SelectionForeColor = Muted, Padding = new Padding(Px(8),0,0,0) };
-            usageGrid.Columns[1].Width = Px(160); usageGrid.Columns[2].Width = Px(140);
-            usageGrid.ColumnHeadersHeight = Px(35); usageGrid.RowTemplate.Height = Px(48);
+            usageGrid.Columns[1].Width = Px(122); usageGrid.Columns[2].Width = Px(108); usageGrid.Columns[3].Width = Px(116);
+            usageGrid.ColumnHeadersHeight = Px(35); usageGrid.RowTemplate.Height = Px(44);
             usageGrid.RefreshMaterial();
         }
         UsageNode SelectedUsage() { return usageGrid == null || usageGrid.SelectedRows.Count == 0 ? null : usageGrid.SelectedRows[0].Tag as UsageNode; }
@@ -118,14 +124,73 @@ namespace CleanBox {
             usagePage = Math.Min(usagePage, pages - 1);
             usageGrid.Rows.Clear();
             foreach (var item in usageRows.Skip(usagePage * UsagePageSize).Take(UsagePageSize)) {
-                int row = usageGrid.Rows.Add(item.Name, item.SizeText, item.Link ? "链接 · 已跳过" : (item.Directory ? "文件夹" : "文件") + (item.Partial ? " · 部分" : ""));
+                int row = usageGrid.Rows.Add(item.Name, item.SizeText, item.Link ? "链接 · 已跳过" : (item.Directory ? "文件夹" : "文件") + (item.Partial ? " · 部分" : ""), UsageShareText(item));
                 usageGrid.Rows[row].Tag = item; usageGrid.Rows[row].Cells[0].ToolTipText = item.Path;
+                usageGrid.Rows[row].Cells[3].ToolTipText = usageLargest ? "占本次扫描范围内已统计大小的比例" : "占当前目录内已统计大小的比例";
             }
             usageGrid.ClearSelection(); usageGrid.CurrentCell = null;
-            usageLocation.Text = (usageLargest ? "已扫描范围内最大的 200 个文件" : usageCurrent.Path) + " · " + usageRows.Count + " 项 · 第 " + (usagePage + 1) + "/" + pages + " 页";
-            tips.SetToolTip(usageLocation, usageLocation.Text);
+            usageLocation.Text = (usageLargest ? "已扫描范围内最大的 200 个文件" : "当前目录") + " · " + usageRows.Count + " 项 · 第 " + (usagePage + 1) + "/" + pages + " 页";
+            tips.SetToolTip(usageLocation, usageLargest ? usageResult.Root.Path : usageCurrent.Path);
+            RefreshUsageBreadcrumbs();
             usageDetail.Text = usageRows.Count == 0 ? "此目录没有可显示的条目。统计不完整时可查看上方说明。" : "目录按已统计大小降序排列，双击文件夹进入。选择条目可转到文件解锁。";
             UpdateUsageActions();
+        }
+
+        void RefreshUsageBreadcrumbs() {
+            usageBreadcrumbs.SuspendLayout();
+            try {
+                while (usageBreadcrumbs.Controls.Count > 0) usageBreadcrumbs.Controls[0].Dispose();
+                var ancestors = new List<UsageNode>();
+                for (var node = usageLargest ? usageResult.Root : usageCurrent; node != null; node = node.Parent)
+                    ancestors.Add(node);
+                ancestors.Reverse();
+                for (int i = 0; i < ancestors.Count; i++) {
+                    if (i > 0 && i < ancestors.Count - 2) {
+                        if (i == 1) {
+                            var omitted = TextLabel("› …", 27, "muted"); omitted.AutoSize = true; omitted.Dock = DockStyle.None;
+                            omitted.Margin = new Padding(Px(3), Px(5), Px(3), 0);
+                            usageBreadcrumbs.Controls.Add(omitted);
+                        }
+                        continue;
+                    }
+                    var node = ancestors[i];
+                    string caption = node.Parent == null ? Path.GetFileName(node.Path.TrimEnd('\\')) : node.Name;
+                    if (caption.Length == 0) caption = node.Path;
+                    if (caption.Length > 16) caption = caption.Substring(0, 15) + "…";
+                    var crumb = new UiButton { Name = "usageBreadcrumb", Text = (i == 0 ? "" : "›  ") + caption,
+                        AccessibleName = node.Path, Kind = "secondary", Height = Px(28), AutoSize = true,
+                        Margin = new Padding(0, 0, Px(4), 0), Enabled = usageLargest || node != usageCurrent };
+                    crumb.Click += (s, e) => ShowUsageDirectory(node);
+                    usageBreadcrumbs.Controls.Add(crumb);
+                    tips.SetToolTip(crumb, node.Path);
+                }
+                usageBreadcrumbs.Visible = true;
+            } finally { usageBreadcrumbs.ResumeLayout(true); }
+        }
+
+        double? UsageShare(UsageNode item) {
+            long total = (usageLargest ? usageResult.Root : usageCurrent).Bytes;
+            return total > 0 && !item.Link ? Math.Min(1.0, (double)item.Bytes / total) : (double?)null;
+        }
+        string UsageShareText(UsageNode item) {
+            var share = UsageShare(item);
+            return share.HasValue ? share.Value.ToString("P0") : "—";
+        }
+        void PaintUsageShare(object sender, DataGridViewCellPaintingEventArgs e) {
+            if (e.RowIndex < 0 || e.ColumnIndex != 3) return;
+            var item = usageGrid.Rows[e.RowIndex].Tag as UsageNode;
+            if (item == null) return;
+            var share = UsageShare(item);
+            if (!share.HasValue) return;
+            e.Paint(e.ClipBounds, DataGridViewPaintParts.Background | DataGridViewPaintParts.SelectionBackground | DataGridViewPaintParts.Border);
+            var bounds = e.CellBounds; bounds.Inflate(-Px(8), 0);
+            var bar = new Rectangle(bounds.Left, bounds.Bottom - Px(10), Math.Max(1, bounds.Width), Px(3));
+            using (var track = new SolidBrush(Palette.Side)) e.Graphics.FillRectangle(track,bar);
+            using (var fill = new SolidBrush(Teal)) e.Graphics.FillRectangle(fill,bar.X,bar.Y,(int)Math.Round(bar.Width*share.Value),bar.Height);
+            bounds.Height -= Px(8);
+            TextRenderer.DrawText(e.Graphics, Convert.ToString(e.FormattedValue), Font, bounds, Ink,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.PreserveGraphicsClipping);
+            e.Handled = true;
         }
         async Task AnalyzeUsage() {
             if (!Idle()) return;

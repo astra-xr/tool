@@ -30,7 +30,7 @@ namespace CleanBox {
                 search.Text=protectedApp.Name;ApplyFilter();check(!uninstallButton.Enabled&&!residualButton.Enabled&&!appMenu.Items[0].Enabled&&!appMenu.Items[1].Enabled,"System components keep destructive entry points disabled");
                 search.Text=candidate.Name;ApplyFilter();check(uninstallButton.Text=="核对并处理目录"&&uninstallButton.Enabled&&!appMenu.Items[1].Enabled,"Candidate uses directory verification instead of a fake uninstall action");
                 var sizeCell=grid.SelectedRows[0].Cells[sizeColumn.Index];
-                check(sizeCell.Value is long && (string)sizeCell.FormattedValue=="2 MB" && detail.Text.Contains("2 MB（仅程序文件）"),"Software size is numeric for sorting and names the measured scope");
+                check(sizeCell.Value is long && (string)sizeCell.FormattedValue=="2 MB" && detailSize.Text=="2 MB" && detail.Text.Contains("仅程序文件"),"Software size is numeric for sorting and names the measured scope");
                 uninstallButton.PerformClick();check(currentPage==1&&pathBox.Text==candidate.Path,"Candidate action opens the correct target in file tools");
                 search.Clear();ApplyFilter();foreach(var a in new[]{protectedApp,candidate}){var row=grid.Rows.Cast<DataGridViewRow>().First(r=>r.Tag==a);grid.Rows.Remove(row);apps.Remove(a);ids.Remove(a.Id);}ApplyFilter();grid.ClearSelection();grid.Rows[0].Selected=true;grid.CurrentCell=grid.Rows[0].Cells[0];grid.FirstDisplayedScrollingRowIndex=0;ShowSelection();
                 pathBox.Clear();check(!inspectButton.Enabled&&!recycleButton.Enabled&&!stopButton.Enabled,"Empty target disables file actions");

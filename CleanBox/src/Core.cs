@@ -53,6 +53,7 @@ namespace CleanBox {
         }
         public RegistryHive Hive; public RegistryView View; public bool Protected;
         internal RegistryStatus Registration;
+        internal string SearchText;
         internal string QuietCommand = "", ModifyCommand = "";
         internal bool NeedsRegistrationReview { get { return Registration != RegistryStatus.Registered; } }
         internal string DisplaySource { get { return NeedsRegistrationReview ? RegistrationLabel : Source; } }
@@ -220,7 +221,6 @@ namespace CleanBox {
             } catch { return ""; }
         }
         static string IconFile(string p) { return Regex.Replace(p??"",@",\s*-?\d+\s*$", ""); }
-        internal static string IconPath(string p) { return CleanPath(IconFile(p)); }
         public static bool ParseCommand(string command,out string exe,out string args) {
             exe="";args=""; string s=Environment.ExpandEnvironmentVariables((command??"").Trim());
             if(s.StartsWith("\"")) { int end=s.IndexOf('"',1); if(end<2) return false; exe=s.Substring(1,end-1);args=s.Substring(end+1).Trim(); }
@@ -432,40 +432,19 @@ namespace CleanBox {
         static void ValidateStaleRecord(AppEntry app,RegistryKey hive) {
             using(var key=hive.OpenSubKey(app.RegistryPath)) {
                 if(key==null) throw new IOException("卸载记录已经不存在。");
-                string location=Scanner.V(key,"InstallLocation"), command=Scanner.V(key,"UninstallString");
-                if(Scanner.V(key,"DisplayName")!=app.Name||Scanner.V(key,"DisplayVersion")!=app.Version
-                    ||location!=app.InstallLocation||command!=app.Command||Scanner.IconPath(Scanner.V(key,"DisplayIcon"))!=app.Executable
-                    ||Scanner.V(key,"SystemComponent")=="1")
+                var current = Scanner.ReadRegistration(key, true);
+                if (current.Name != app.Name || current.Version != app.Version || current.InstallLocation != app.InstallLocation
+                    || current.Command != app.Command || current.Executable != app.Executable
+                    || current.QuietCommand != app.QuietCommand || current.ModifyCommand != app.ModifyCommand)
                     throw new IOException("卸载记录已经变化，请重新扫描。");
-                if(Scanner.V(key,"WindowsInstaller")=="1") throw new IOException("MSI 记录应由 Windows Installer 管理。");
-                EnsureStalePaths(location,app.Path,command,Scanner.V(key,"QuietUninstallString"));
+                EnsureStaleRegistration(current, app.Path);
             }
         }
 
-        internal static void EnsureStalePaths(string location,string inferredLocation,string command,string quietCommand) {
-            if(string.IsNullOrWhiteSpace(location)&&string.IsNullOrWhiteSpace(command)&&string.IsNullOrWhiteSpace(quietCommand))
-                throw new IOException("缺少安装位置和卸载入口，无法核实记录是否失效。");
-            if(!string.IsNullOrWhiteSpace(location)) RequireMissingPath(location);
-            if(!string.IsNullOrWhiteSpace(inferredLocation)) RequireMissingPath(inferredLocation);
-            foreach(string entry in new[]{command,quietCommand}) {
-                if(string.IsNullOrWhiteSpace(entry)) continue;
-                string exe,args;
-                if(!Scanner.ParseCommand(entry,out exe,out args)) throw new IOException("无法识别卸载命令，不能确定记录已失效。");
-                if(System.IO.Path.GetFileName(exe).Equals("msiexec.exe",StringComparison.OrdinalIgnoreCase))
-                    throw new IOException("MSI 记录应由 Windows Installer 管理。");
-                RequireMissingPath(exe);
-            }
-        }
-
-        static void RequireMissingPath(string value) {
-            string path=Safety.Normalize(Environment.ExpandEnvironmentVariables(value.Trim().Trim('"')));
-            var drive=new DriveInfo(System.IO.Path.GetPathRoot(path));
-            if(drive.DriveType!=DriveType.Fixed||!drive.IsReady||Safety.HasReparseAncestor(path))
-                throw new IOException("卸载记录中的路径无法可靠核实："+path);
-            try { File.GetAttributes(path); }
-            catch(FileNotFoundException) { return; }
-            catch(DirectoryNotFoundException) { return; }
-            throw new IOException("安装位置或卸载程序仍然存在："+path);
+        internal static void EnsureStaleRegistration(AppEntry current, string inferredLocation) {
+            if (current.Protected || current.Registration != RegistryStatus.Stale
+                || (!string.IsNullOrWhiteSpace(inferredLocation) && !Scanner.IsMissingLocalPath(inferredLocation)))
+                throw new IOException("软件仍有安装迹象，或路径无法核实。已保留卸载记录。");
         }
     }
 }
