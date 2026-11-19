@@ -13,6 +13,7 @@ namespace CleanBox {
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         internal static int Kind(AppEntry app) {
+            if (app.IsPackageFramework) return 2;
             if (app.Protected) return 3;
             return runtimeName.IsMatch(app.Name) ? 2 : 1;
         }
@@ -41,7 +42,7 @@ namespace CleanBox {
             var columns = new CanvasTablePanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1 };
             columns.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             for (int i = 0; i < 4; i++) columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-            kindFilter = FilterChoice("软件类型", new[] { "全部类型", "主要软件", "运行库与组件", "系统组件" });
+            kindFilter = FilterChoice("软件类型", new[] { "全部类型", "应用与候选", "运行库与组件", "系统标记或保护" });
             kindFilter.SelectedIndex = 1;
             publisherFilter = FilterChoice("发布者", new[] { "全部发布者" });
             driveFilter = FilterChoice("所在磁盘", new[] { "全部磁盘" });

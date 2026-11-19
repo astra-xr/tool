@@ -34,6 +34,7 @@ namespace CleanBox {
             VerifyV250(root);
             VerifyRegistrationVisibility(root);
             VerifyV260(root);
+            VerifyUninstallAdvice();
             string linkHolder=Path.Combine(root,"link-holder"),destination=Path.Combine(root,"sentinel"),junction=Path.Combine(linkHolder,"jump");Directory.CreateDirectory(linkHolder);Directory.CreateDirectory(destination);File.WriteAllText(Path.Combine(destination,"keep.txt"),"must survive link rejection");
             Store.RunPowerShell("New-Item -ItemType Junction -Path "+Store.QuotePS(junction)+" -Target "+Store.QuotePS(destination)+" | Out-Null",CancellationToken.None);
             File.WriteAllBytes(Path.Combine(linkHolder,"local.bin"),new byte[4096]);
@@ -154,6 +155,31 @@ namespace CleanBox {
             Check(File.ReadAllText(path)==newer,"An unsupported history version remains intact");
             Check(MainForm.DescribeLocks(new LockReport { Partial=true }).StartsWith("暂无法确认占用"),
                 "An incomplete lock check does not look like a confirmed empty result");
+        }
+
+        internal static void VerifyUninstallAdvice() {
+            var protectedApp = UninstallAdvice.For(new AppEntry { Name="Google Chrome", Publisher="Google LLC", Protected=true });
+            Check(protectedApp.Category=="系统标记组件" && protectedApp.Recommendation=="建议保留",
+                "Registry protection takes precedence over matching a removable desktop app profile");
+            var framework = new AppEntry { Package="fixture_1_x64__publisher", IsPackageFramework=true, Protected=true };
+            Check(CatalogClassification.Kind(framework)==2 && UninstallAdvice.For(framework).Category.Contains("共享框架"),
+                "Protected package frameworks are identified as shared components");
+            var app = new AppEntry { Name="Google Chrome", Publisher="Google LLC", RegistryPath="fixture", Command="uninstall.exe" };
+            var browser = UninstallAdvice.For(app);
+            Check(browser.Category.Contains("非系统组件") && browser.Recommendation.Contains("考虑卸载") && browser.Impact.Contains("书签"),
+                "A known vendor and application receive tailored uninstall impact");
+            app.Publisher="另一个发布者";
+            Check(UninstallAdvice.For(app).Recommendation=="先核实用途", "A matching name alone does not identify a desktop app");
+            app.Registration=RegistryStatus.Stale;
+            Check(UninstallAdvice.For(app).Recommendation=="无需卸载", "A stale entry is treated as an uninstall registration");
+            Check(UninstallAdvice.For(new AppEntry { Executable="candidate.exe", ReportedDescription="本地文件说明" }).Purpose.Contains("本地文件说明"),
+                "File description is labeled and available for an unknown candidate");
+            var runtime=UninstallAdvice.For(new AppEntry { Name="Microsoft Edge WebView2 Runtime", RegistryPath="runtime-fixture" });
+            Check(runtime.Recommendation=="建议保留" && runtime.Impact.Contains("依赖"), "Shared runtimes explain the impact on other applications");
+            var calculator=new AppEntry { Name="Microsoft.WindowsCalculator", Package="Microsoft.WindowsCalculator_1.0.0.0_x64__8wekyb3d8bbwe" };
+            Check(UninstallAdvice.For(calculator).Purpose.Contains("单位换算"), "A recognized store package receives a specific description");
+            calculator.Package="Microsoft.WindowsCalculator_1.0.0.0_x64__otherpublisher";
+            Check(UninstallAdvice.For(calculator).Recommendation=="先核实用途", "An unrecognized store publisher does not receive a generic safe-removal verdict");
         }
 
         static void VerifyRegistrationVisibility(string root) {

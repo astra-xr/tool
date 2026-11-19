@@ -19,6 +19,7 @@ namespace CleanBox {
         readonly List<Button> selectionActions=new List<Button>();readonly ToolTip tips=new ToolTip{AutoPopDelay=15000,InitialDelay=450};
         DataGridView grid;TextBox search,detail,pathBox,logBox;ChoiceButton filter;Label status,totalLabel,installedLabel,foundLabel,lockSummary,lockSize,detailTitle,detailSubtitle,listCount,emptyList,stepLabel,dropText;
         DataGridViewColumn sizeColumn;
+        TextBox adviceDetail;
         Label detailSize, detailPublisher, detailVersion, detailSource;
         Label[] steps;ListBox lockList;Button quick,disk,folder,cancel,adminButton,uninstallButton,openButton,residualButton,inspectButton,stopButton,recycleButton,fileMore,themeButton,densityButton,glassButton,motionButton;
         GlassProgress progress;Panel host,sidebar,catalogBody,detailPanel,dropZone;Panel[] pages;UiButton[] navigation;PictureBox detailIcon;ContextMenuStrip scanMenu,appMenu,fileMenu;
@@ -84,7 +85,7 @@ namespace CleanBox {
             var row = CreateCatalogRow(a, CaptureCatalogFilter());
             if (row != null) grid.Rows.Add(row);
         }
-        string CatalogSource(AppEntry a){return a.NeedsRegistrationReview?a.RegistrationLabel:a.Protected?"系统组件":IsCandidate(a)?"绿色候选":a.Package.Length>0?"应用商店":"已安装";}
+        string CatalogSource(AppEntry a){return a.NeedsRegistrationReview?a.RegistrationLabel:a.IsPackageFramework?"共享框架":a.Protected?"受保护":IsCandidate(a)?"绿色候选":a.Package.Length>0?"应用商店":"已安装";}
         Func<AppEntry,bool> CaptureCatalogFilter() {
             string term = appliedSearch;
             int category = filter.SelectedIndex;
@@ -101,8 +102,13 @@ namespace CleanBox {
         void ShowSelection(){if(detail==null||changingCatalog)return;var a=Selected();foreach(var b in selectionActions)b.Enabled=a!=null&&!working;
             if(a==null){detailTitle.Text="选择软件";detailSubtitle.Text="";detailIcon.Image=null;
                 detailSize.Text=detailPublisher.Text=detailVersion.Text=detailSource.Text="—";
+                adviceDetail.Text="选择软件后查看用途、卸载建议和可能影响。";
                 detail.Text="选择软件后可查看安装位置和卸载入口。";return;}
-            bool candidate=IsCandidate(a);detailTitle.Text=a.Name;tips.SetToolTip(detailTitle,a.Name);detailSubtitle.Text=a.Protected?"系统组件 · 已保护":candidate?"绿色软件候选 · 需要核对":CatalogSource(a);
+            bool candidate=IsCandidate(a);detailTitle.Text=a.Name;tips.SetToolTip(detailTitle,a.Name);
+            var advice=UninstallAdvice.For(a);
+            detailSubtitle.Text=advice.Category;tips.SetToolTip(detailSubtitle,advice.Category);
+            string adviceText=advice.DetailText;
+            if(adviceDetail.Text!=adviceText)adviceDetail.Text=adviceText;
             string size=a.SizeBytes.HasValue?a.SizeSource+"\r\n":"";
             if(a.SizeKind==AppSizeKind.EngineLauncher)size+="引擎内的应用本体和缓存未计入。\r\n";
             size+=a.SizeExplanation;if(a.SizeMeasuredUtc!=DateTime.MinValue)size+="\r\n实测时间："+a.SizeMeasuredUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -112,7 +118,7 @@ namespace CleanBox {
             detailSource.Text=a.DisplaySource;
             foreach (var label in new[] { detailPublisher, detailVersion, detailSource }) tips.SetToolTip(label,label.Text);
             detail.Text=size+"\r\n\r\n安装位置\r\n"+(a.Path.Length>0?a.Path:"未提供")+"\r\n\r\n"+(a.Package.Length>0?"软件包\r\n"+a.Package:"卸载入口\r\n"+(a.Command.Length>0?a.Command:"未提供"));
-            uninstallButton.Text=a.Protected?"系统组件 · 已保护":candidate?"核对并处理目录":"正常卸载";uninstallButton.Enabled=!working&&!a.Protected&&!a.NeedsRegistrationReview&&(candidate?a.Path.Length>0:a.Command.Length>0||a.Package.Length>0);openButton.Enabled=!working&&(a.Path.Length>0||a.Executable.Length>0);residualButton.Enabled=!working&&!a.Protected;appMenu.Items[0].Enabled=!working&&!a.Protected&&a.Path.Length>0;appMenu.Items[1].Enabled=!working&&a.Registration==RegistryStatus.Stale;
+            uninstallButton.Text=a.Protected?"受保护组件":candidate?"核对并处理目录":"正常卸载";uninstallButton.Enabled=!working&&!a.Protected&&!a.NeedsRegistrationReview&&(candidate?a.Path.Length>0:a.Command.Length>0||a.Package.Length>0);openButton.Enabled=!working&&(a.Path.Length>0||a.Executable.Length>0);residualButton.Enabled=!working&&!a.Protected;appMenu.Items[0].Enabled=!working&&!a.Protected&&a.Path.Length>0;appMenu.Items[1].Enabled=!working&&a.Registration==RegistryStatus.Stale;
             measureButton.Enabled=!working&&!a.Protected&&!a.NeedsRegistrationReview;Image img;detailIcon.Image=appIcons.TryGetValue(a.Id,out img)?img:null;RequestIcon(a);
         }
     }

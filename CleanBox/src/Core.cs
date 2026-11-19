@@ -54,6 +54,8 @@ namespace CleanBox {
         public RegistryHive Hive; public RegistryView View; public bool Protected;
         internal RegistryStatus Registration;
         internal string SearchText;
+        internal string ReportedDescription = "";
+        internal bool IsPackageFramework;
         internal string QuietCommand = "", ModifyCommand = "";
         internal bool NeedsRegistrationReview { get { return Registration != RegistryStatus.Registered; } }
         internal string DisplaySource { get { return NeedsRegistrationReview ? RegistrationLabel : Source; } }
@@ -167,11 +169,17 @@ namespace CleanBox {
                 QuietCommand = V(key, "QuietUninstallString"), ModifyCommand = V(key, "ModifyPath")
             };
             if (assess && !string.IsNullOrWhiteSpace(app.Name)) {
+                app.ReportedDescription = DescribeMetadata(V(key, "Comments"));
                 app.SizeBytes = FileSizes.FromEstimatedKilobytes(key.GetValue("EstimatedSize"));
                 app.SizeKind = AppSizeKind.RegisteredEstimate;
                 app.Registration = AssessRegistration(app, icon, V(key, "WindowsInstaller") == "1");
             }
             return app;
+        }
+
+        static string DescribeMetadata(string value) {
+            string description = Regex.Replace(value ?? "", @"[\p{Cc}\s]+", " ").Trim();
+            return description.Length > 240 ? description.Substring(0, 239) + "…" : description;
         }
 
         internal static RegistryStatus AssessRegistration(AppEntry app, string icon, bool windowsInstaller) {
@@ -233,7 +241,8 @@ namespace CleanBox {
             if(string.IsNullOrWhiteSpace(json)) return;
             var ser=new JavaScriptSerializer{MaxJsonLength=16777216}; var obj=ser.DeserializeObject(json); var list=obj as object[] ?? new[]{obj};
             foreach(var item in list) { token.ThrowIfCancellationRequested(); var d=item as Dictionary<string,object>; if(d==null) continue; Func<string,string> v=k=>d.ContainsKey(k)?Convert.ToString(d[k]):"";
-                add(new AppEntry{Name=v("Name"),Version=v("Version"),Publisher=v("Publisher"),Path=v("InstallLocation"),InstallLocation=v("InstallLocation"),Package=v("PackageFullName"),Source="商店 / MSIX · 当前用户",Protected=v("IsFramework")=="True"||v("NonRemovable")=="True"});
+                bool framework=v("IsFramework")=="True";
+                add(new AppEntry{Name=v("Name"),Version=v("Version"),Publisher=v("Publisher"),Path=v("InstallLocation"),InstallLocation=v("InstallLocation"),Package=v("PackageFullName"),Source="商店 / MSIX · 当前用户",IsPackageFramework=framework,Protected=framework||v("NonRemovable")=="True"});
             }
         }
         public static void Shortcuts(Action<AppEntry> add,Action<string> status,CancellationToken token) {
@@ -250,7 +259,7 @@ namespace CleanBox {
         public static AppEntry FromExe(string p,string source,string title=null) {
             var a=new AppEntry{Executable=p,Path=System.IO.Path.GetDirectoryName(p),Source=source,Name=title??System.IO.Path.GetFileNameWithoutExtension(p)};
             a.SizeBytes=FileSizes.ReadLength(p);
-            try { var v=FileVersionInfo.GetVersionInfo(p); if(title==null&&!string.IsNullOrWhiteSpace(v.ProductName)) a.Name=v.ProductName.Trim(); a.Version=v.ProductVersion??"";a.Publisher=v.CompanyName??""; } catch {}
+            try { var v=FileVersionInfo.GetVersionInfo(p); if(title==null&&!string.IsNullOrWhiteSpace(v.ProductName)) a.Name=v.ProductName.Trim(); a.Version=v.ProductVersion??"";a.Publisher=v.CompanyName??"";a.ReportedDescription=DescribeMetadata(v.FileDescription); } catch {}
             return a;
         }
         public static IEnumerable<string> WalkFiles(string root,string pattern,CancellationToken token,Action<string> status,int maxDepth=int.MaxValue) {

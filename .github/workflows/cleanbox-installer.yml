@@ -43,8 +43,8 @@ jobs:
           Invoke-TestProcess $setup $setupArgs
 
           $app = Join-Path $installDir 'CleanBox.exe'
-          if ($env:RELEASE_BUILD -eq 'true' -and (Get-Item -LiteralPath $app).VersionInfo.FileVersion.Trim() -ne '2.6.0.0') {
-              throw 'The installer must contain CleanBox 2.6.0.'
+          if ($env:RELEASE_BUILD -eq 'true' -and (Get-Item -LiteralPath $app).VersionInfo.FileVersion.Trim() -ne '2.6.1.0') {
+              throw 'The installer must contain CleanBox 2.6.1.'
           }
           $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'CleanBox/CleanBox.lnk'
           $desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'CleanBox.lnk'
@@ -125,7 +125,7 @@ jobs:
           }
           Write-Output 'Installer lifecycle, embedded icons, desktop and Start menu shortcut checks passed.'
         env:
-          RELEASE_BUILD: ${{ github.event.head_commit.message == 'Publish CleanBox 2.6.0' }}
+          RELEASE_BUILD: ${{ github.event.head_commit.message == 'Publish CleanBox 2.6.1' }}
       - uses: actions/upload-artifact@v4
         with:
           name: CleanBox-Release-Windows-x64
@@ -137,7 +137,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: github.event.head_commit.message == 'Publish CleanBox 2.6.0'
+    if: github.event.head_commit.message == 'Publish CleanBox 2.6.1'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -161,10 +161,9 @@ jobs:
           sha256sum --check CleanBox-Windows-x64.zip.sha256
 
           cat > "$RUNNER_TEMP/cleanbox-notes.md" <<'EOF'
-          - 修复软件仍存在时可能被误清除卸载登记的问题，保留 F5 刷新前仍有效的磁盘发现结果。
-          - 损坏的历史文件会在下次保存时备份并重建。缩短了软件搜索的等待时间。
-          - 清理确认可展开目录、文件和最大文件列表。占用检查不完整时会提示「暂无法确认占用」。
-          - 软件页采用紧凑列表和新的详情布局。磁盘页增加可点击的目录路径和占用比例条。
+          - 软件管理新增「卸载说明」，可查看软件用途、组件类别、卸载建议、可能影响和判断依据。
+          - 系统标记组件、受保护的软件包和共享运行库分别提示。资料不足的应用会标为待核实。
+          - 正常卸载的确认窗口也会展示可能影响。「技术详情」里可查看安装位置和卸载入口。
 
           **Windows x64 安装版**：下载 `CleanBox-Setup-Windows-x64.exe`，双击后按向导安装。需要桌面入口时，勾选「创建桌面快捷方式」。
 
@@ -172,8 +171,8 @@ jobs:
 
           两个下载包均附 SHA-256 校验文件。
           EOF
-          gh release create cleanbox-v2.6.0 \
+          gh release create cleanbox-v2.6.1 \
             CleanBox-Setup-Windows-x64.exe CleanBox-Setup-Windows-x64.exe.sha256 \
             CleanBox-Windows-x64.zip CleanBox-Windows-x64.zip.sha256 \
-            --target "$GITHUB_SHA" --title 'CleanBox 2.6.0' \
+            --target "$GITHUB_SHA" --title 'CleanBox 2.6.1' \
             --notes-file "$RUNNER_TEMP/cleanbox-notes.md" --latest

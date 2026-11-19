@@ -81,7 +81,7 @@ namespace CleanBox {
             title.Controls.Add(detailIcon);title.Controls.Add(detailTitle);title.Controls.Add(detailSubtitle);
             title.Resize+=(s,e)=>detailTitle.Width=detailSubtitle.Width=Math.Max(10,title.Width-detailTitle.Left);
             detailSize=TextLabel("—",42,"accent"); detailSize.Font=new Font(Font.FontFamily,21,FontStyle.Bold);
-            detail=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,BorderStyle=BorderStyle.None,AccessibleName="软件详细信息"};
+            var sections=BuildDetailSections();
             var properties=new CanvasTablePanel{Dock=DockStyle.Top,Height=82,RowCount=3,ColumnCount=2};
             properties.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,62));properties.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
             string[] captions={"发布者","版本","来源"};
@@ -103,7 +103,29 @@ namespace CleanBox {
             actions.Controls.Add(uninstallButton,0,0);actions.SetColumnSpan(uninstallButton,2);
             actions.Controls.Add(openButton,0,1);actions.Controls.Add(residualButton,1,1);
             actions.Controls.Add(measureButton,0,2);actions.Controls.Add(more,1,2);
-            p.Controls.Add(detail);p.Controls.Add(actions);p.Controls.Add(properties);p.Controls.Add(detailSize);p.Controls.Add(title);return p;
+            p.Controls.Add(sections);p.Controls.Add(actions);p.Controls.Add(properties);p.Controls.Add(detailSize);p.Controls.Add(title);return p;
+        }
+
+        Panel BuildDetailSections(){
+            var panel=new CanvasPanel{Dock=DockStyle.Fill};
+            var tabs=new CanvasTablePanel{Dock=DockStyle.Top,Height=34,ColumnCount=2,RowCount=1};
+            tabs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            tabs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            var adviceTab=new UiButton{Name="adviceTab",Text="卸载说明",Dock=DockStyle.Fill,Margin=new Padding(0,0,4,3),Padding=Padding.Empty,Selected=true};
+            var detailsTab=new UiButton{Name="detailsTab",Text="技术详情",Dock=DockStyle.Fill,Margin=new Padding(4,0,0,3),Padding=Padding.Empty};
+            tabs.Controls.Add(adviceTab,0,0);tabs.Controls.Add(detailsTab,1,0);
+            var advicePane=new CanvasPanel{Dock=DockStyle.Fill};
+            var detailsPane=new CanvasPanel{Dock=DockStyle.Fill,Visible=false};
+            adviceDetail=new TextBox{Name="uninstallAdvice",Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,
+                BorderStyle=BorderStyle.None,AccessibleName="软件用途和卸载影响"};
+            detail=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,BorderStyle=BorderStyle.None,AccessibleName="软件技术详情"};
+            advicePane.Controls.Add(adviceDetail);detailsPane.Controls.Add(detail);
+            Action<bool> select=showAdvice=>{
+                advicePane.Visible=adviceTab.Selected=showAdvice;detailsPane.Visible=detailsTab.Selected=!showAdvice;
+            };
+            adviceTab.Click+=(s,e)=>select(true);detailsTab.Click+=(s,e)=>select(false);
+            panel.Controls.Add(advicePane);panel.Controls.Add(detailsPane);panel.Controls.Add(tabs);
+            return panel;
         }
         Panel BuildFiles(){
             var p=Page();var heading=Heading("文件解锁","找到占用它的程序，再处理文件");heading.Height=68;var stepBar=new CanvasTablePanel{Dock=DockStyle.Top,Height=38,ColumnCount=3};steps=new Label[3];string[] captions={"1   选择文件","2   检查并解除占用","3   确认删除"};for(int i=0;i<3;i++){stepBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,33.33f));steps[i]=new Label{Text=captions[i],Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,Tag="muted"};stepBar.Controls.Add(steps[i],i,0);}

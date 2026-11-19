@@ -68,8 +68,10 @@ namespace CleanBox {
             return path.Length == 3 && path[1] == ':' && path[2] == '\\' ? path : "\"" + path + "\"";
         }
         void UseSelectedFolder(){var a=Selected();if(a==null)return;if(a.Path.Length==0){MessageBox.Show(this,"该条目没有提供安装目录，请手动选择目标。","清理匣");return;}pathBox.Text=a.Path;SwitchPage(1);}
-        async Task UninstallSelected(){if(!Idle())return;var a=Selected();if(a==null||a.NeedsRegistrationReview)return;if(a.Protected){MessageBox.Show(this,"此项是系统组件，本工具不执行卸载。","受保护项目");return;}
-            if(!Confirm("正常卸载",a.Name+"\r\n\r\n"+(a.Package.Length>0?"仅卸载当前用户的软件包：\r\n"+a.Package:"即将启动软件登记的卸载程序：\r\n"+a.Command),false))return;
+        async Task UninstallSelected(){if(!Idle())return;var a=Selected();if(a==null||a.NeedsRegistrationReview)return;if(a.Protected){MessageBox.Show(this,"此项为受保护组件。","受保护项目");return;}
+            var advice=UninstallAdvice.For(a);
+            string target=a.Package.Length>0?"当前用户的软件包\r\n"+a.Package:"将启动登记中的卸载程序\r\n"+a.Command;
+            if(!Confirm("正常卸载",a.Name+"\r\n"+advice.Category+" · "+advice.Recommendation+"\r\n\r\n卸载影响\r\n"+advice.Impact+"\r\n\r\n"+target,false))return;
             Busy(true);bool launched=false;try{await Task.Run(()=>Operations.Uninstall(a));launched=true;RememberUninstall(a,replaceExisting:true);latestStatus="卸载已启动，完成后请核对结果与残留。";}catch(Exception e){ShowError(e);}finally{Busy(false);}if(launched)ShowResidualReview(a,true);}
         async Task ClearRecord(){if(!Idle())return;var a=Selected();if(a==null||a.Registration!=RegistryStatus.Stale)return;if(!Confirm("清除失效记录",a.Name+"\r\n"+a.Hive+"\\"+a.RegistryPath+"\r\n\r\n清理这条失效的卸载登记前会导出备份。",true))return;
             Busy(true);try{await Task.Run(()=>Operations.RemoveStaleRecord(a));if(UpdateCatalogRegistration(a,RegistrationState.Missing)){RebuildCatalogIndex();ApplyFilter();}MessageBox.Show(this,"失效记录已删除，软件清单已更新。备份保存在 data 目录。","完成");}catch(Exception e){ShowError(e);}finally{Busy(false);}}

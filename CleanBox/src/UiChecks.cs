@@ -28,6 +28,7 @@ namespace CleanBox {
                 var candidate=new AppEntry{Name="UI candidate fixture",Executable=Path.Combine(Store.Home,"tests","ui-candidate.exe"),Path=Path.Combine(Store.Home,"tests"),Source="磁盘发现",SizeBytes=2097152};
                 foreach(var a in new[]{protectedApp,candidate})Add(a);
                 search.Text=protectedApp.Name;ApplyFilter();check(!uninstallButton.Enabled&&!residualButton.Enabled&&!appMenu.Items[0].Enabled&&!appMenu.Items[1].Enabled,"System components keep destructive entry points disabled");
+                check(adviceDetail.Visible && detailSubtitle.Text=="系统标记组件" && adviceDetail.Text.StartsWith("建议保留"),"Selecting a protected component displays its category and recommendation");
                 search.Text=candidate.Name;ApplyFilter();check(uninstallButton.Text=="核对并处理目录"&&uninstallButton.Enabled&&!appMenu.Items[1].Enabled,"Candidate uses directory verification instead of a fake uninstall action");
                 var sizeCell=grid.SelectedRows[0].Cells[sizeColumn.Index];
                 check(sizeCell.Value is long && (string)sizeCell.FormattedValue=="2 MB" && detailSize.Text=="2 MB" && detail.Text.Contains("仅程序文件"),"Software size is numeric for sorting and names the measured scope");
@@ -67,7 +68,7 @@ namespace CleanBox {
                 check(quick.Left>=0&&quick.Right<=quick.Parent.ClientSize.Width,"Scan action stays inside the heading");
                 check(search.Parent.Bottom<=search.Parent.Parent.ClientSize.Height&&search.Top>=0&&search.Bottom<=search.Parent.ClientSize.Height&&filter.Bottom<=filter.Parent.ClientSize.Height,"Search field and source filter fit the visible row at screen DPI");
                 ClientSize=new Size(Px(1024),Px(662));PerformLayout();ArrangeCatalog();capture("v220-software-compact");
-                check(grid.Width>=Px(300)&&detail.Width>Px(180)&&detailTitle.Right<=detailTitle.Parent.ClientSize.Width,"Narrow window preserves usable list and complete detail layout");
+                check(grid.Width>=Px(300)&&adviceDetail.Width>Px(180)&&detailTitle.Right<=detailTitle.Parent.ClientSize.Width,"Narrow window preserves usable list and complete detail layout");
                 int sizeTextWidth=TextRenderer.MeasureText("≈ 1023.99 MB",grid.Font).Width+grid.DefaultCellStyle.Padding.Horizontal;
                 check(grid.GetColumnDisplayRectangle(sizeColumn.Index,true).Width==sizeColumn.Width&&sizeColumn.Width>=sizeTextWidth,"Narrow window keeps the size value and unit visible");
                 SwitchPage(1);pathBox.Text="";MotionClock.FinishAll();capture("v220-file-tools");check(pathBox.Right<=pathBox.Parent.ClientSize.Width&&lockList.Height>=Px(80),"Narrow file page keeps target and results visible");
