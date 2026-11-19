@@ -152,7 +152,8 @@ namespace CleanBox {
             RefreshMaterial();
             SwitchPage(0);
             ResetFilters();
-            check(grid.Rows.Cast<DataGridViewRow>().All(r => r.Visible), "Reset exposes every collected entry");
+            check(grid.Rows.Cast<DataGridViewRow>().All(r => r.Visible == !((AppEntry)r.Tag).NeedsRegistrationReview),
+                "Reset exposes every entry in the regular software catalog");
 
             var fixtures = new[] {
                 new AppEntry { Name="Filter sample", Publisher="Filter Publisher A", RegistryPath="filter-check-a", Path=@"D:\ExampleA" },
@@ -177,7 +178,8 @@ namespace CleanBox {
                 search.Text = "nonexistent filter target";ApplyFilter();
                 check(Selected() == null && emptyList.Visible && selectionActions.All(b => !b.Enabled), "Empty combined results disable stale actions");
                 resetFiltersButton.PerformClick();
-                check(grid.Rows.Cast<DataGridViewRow>().All(r => r.Visible) && !resetFiltersButton.Enabled, "One-click reset clears every condition and search");
+                check(grid.Rows.Cast<DataGridViewRow>().All(r => r.Visible == !((AppEntry)r.Tag).NeedsRegistrationReview) && !resetFiltersButton.Enabled,
+                    "One-click reset clears every condition and search");
                 check(CatalogClassification.Kind(fixtures[3]) == 2 && CatalogClassification.Kind(fixtures[4]) == 3
                     && CatalogClassification.Kind(new AppEntry { Name="Microsoft Visual Studio", Publisher="Microsoft Corporation" }) == 1,
                     "Runtime classification preserves full applications from the same publisher");

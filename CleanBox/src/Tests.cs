@@ -32,6 +32,7 @@ namespace CleanBox {
             VerifyV243(root);
             VerifyV244(root);
             VerifyV250(root);
+            VerifyRegistrationVisibility(root);
             string linkHolder=Path.Combine(root,"link-holder"),destination=Path.Combine(root,"sentinel"),junction=Path.Combine(linkHolder,"jump");Directory.CreateDirectory(linkHolder);Directory.CreateDirectory(destination);File.WriteAllText(Path.Combine(destination,"keep.txt"),"must survive link rejection");
             Store.RunPowerShell("New-Item -ItemType Junction -Path "+Store.QuotePS(junction)+" -Target "+Store.QuotePS(destination)+" | Out-Null",CancellationToken.None);
             File.WriteAllBytes(Path.Combine(linkHolder,"local.bin"),new byte[4096]);
@@ -125,6 +126,45 @@ namespace CleanBox {
                 "An unrelated registration with a similar path prefix does not block recycling");
             Reject(()=>ResidualReview.EnsureCanRecycle(new AppEntry { RegistryPath="invalid" },residual,CancellationToken.None),"Recycling refuses a registration that cannot be verified");
         }
+        static void VerifyRegistrationVisibility(string root) {
+            string folder = Path.Combine(root, "registration-fixture");
+            string launcher = Path.Combine(folder, "launcher.exe");
+            string uninstaller = Path.Combine(folder, "uninstall_complete.exe");
+            var app = new AppEntry { Name = "WeGame", Publisher = "WeGame" };
+            Check(Scanner.AssessRegistration(app, "", false) == RegistryStatus.Incomplete,
+                "A registration containing only the display name and publisher needs review");
+            Check(Scanner.AssessRegistration(app, "", true) == RegistryStatus.Registered,
+                "Sparse Windows Installer registrations stay in the installed list");
+            Check(Scanner.AssessRegistration(new AppEntry { Version = "1.0" }, "", false) == RegistryStatus.Registered,
+                "A versioned registration without local paths is inconclusive");
+
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(launcher, "fixture");
+            File.WriteAllText(uninstaller, "fixture");
+            app.Command = "\"" + uninstaller + "\" /remove";
+            Check(Scanner.AssessRegistration(app, launcher, false) == RegistryStatus.Registered,
+                "An existing launcher and uninstaller keep the installation visible");
+            File.Delete(launcher);
+            Check(Scanner.AssessRegistration(app, launcher, false) == RegistryStatus.Registered,
+                "An existing uninstaller protects the registration when the icon is missing");
+            File.Delete(uninstaller);
+            Check(Scanner.AssessRegistration(app, launcher, false) == RegistryStatus.Stale,
+                "A WeGame-like key with no install location and two missing executables is stale");
+            File.WriteAllText(uninstaller, "fixture");
+            app.QuietCommand = "\"" + uninstaller + "\" /quiet";
+            app.Command = "";
+            Check(Scanner.AssessRegistration(app, launcher, false) == RegistryStatus.Registered,
+                "An existing quiet uninstaller protects the registration");
+            app.Command = "MsiExec /I{00000000-0000-0000-0000-000000000000}";
+            app.QuietCommand = "";
+            Check(Scanner.AssessRegistration(app, launcher, false) == RegistryStatus.Registered,
+                "A Windows Installer command does not count as missing local evidence");
+            Check(Scanner.AssessRegistration(new AppEntry { InstallLocation = @"\\host\share\Game" }, "", false) == RegistryStatus.Registered,
+                "An unverified network path does not count as a removed installation");
+            Check(!ResidualReview.CanRecycle(RegistrationState.Stale) && !ResidualReview.CanRecycle(RegistrationState.Incomplete),
+                "Registry review status never grants permission to recycle residual files");
+        }
+
         internal static void VerifyV244(string root) {
             var state = new CatalogState(null);
             var original = new AppEntry { Name = "Repeat uninstall", Version = "1", RegistryPath = "Repeat-Task", Path = Path.Combine(root, "old-app") };

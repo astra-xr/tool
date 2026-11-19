@@ -9,7 +9,7 @@ namespace CleanBox {
         readonly HashSet<string> diskNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         static string RegisteredKey(AppEntry app) {
-            return string.Join("\0", new[] { app.RegistryPath, app.Hive.ToString(), app.Name, app.Version, app.Path, app.Command });
+            return string.Join("\0", new[] { app.RegistryPath, app.Hive.ToString(), app.Name, app.Version, app.Path, app.Command, app.Registration.ToString() });
         }
         static string LocationKey(AppEntry app) { return app.Path + "\0" + app.Name; }
 
@@ -21,8 +21,11 @@ namespace CleanBox {
         }
 
         void IndexCatalogEntry(AppEntry app) {
-            if (app.RegistryPath.Length > 0) { registeredEntries.Add(RegisteredKey(app)); installedNames.Add(LocationKey(app)); }
-            if (app.Executable.Length > 0) knownExecutables.Add(app.Executable);
+            if (app.RegistryPath.Length > 0) {
+                registeredEntries.Add(RegisteredKey(app));
+                if (!app.NeedsRegistrationReview) installedNames.Add(LocationKey(app));
+            }
+            if (app.Executable.Length > 0 && !app.NeedsRegistrationReview) knownExecutables.Add(app.Executable);
             if (app.Source.StartsWith("磁盘")) diskNames.Add(LocationKey(app));
         }
 

@@ -13,6 +13,7 @@ using Microsoft.Win32;
 
 namespace CleanBox {
     public enum AppSizeKind { Executable, RegisteredEstimate, InstallDirectory, EngineLauncher }
+    internal enum RegistryStatus { Registered, Stale, Incomplete }
     public class AppEntry {
         public string Name = "", Version = "", Publisher = "", Source = "", Path = "", Executable = "", Command = "", Package = "", RegistryPath = "";
         public long? SizeBytes;
@@ -51,6 +52,11 @@ namespace CleanBox {
             }
         }
         public RegistryHive Hive; public RegistryView View; public bool Protected;
+        internal RegistryStatus Registration;
+        internal string QuietCommand = "", ModifyCommand = "";
+        internal bool NeedsRegistrationReview { get { return Registration != RegistryStatus.Registered; } }
+        internal string DisplaySource { get { return NeedsRegistrationReview ? RegistrationLabel : Source; } }
+        internal string RegistrationLabel { get { return Registration == RegistryStatus.Stale ? "失效登记" : "登记待核实"; } }
         public string Id { get { return Package.Length > 0 ? "appx:" + Package : RegistryPath.Length > 0 ? Hive + ":" + View + ":" + RegistryPath : "exe:" + Executable.ToLowerInvariant(); } }
     }
     internal static class FileSizes {
@@ -109,7 +115,7 @@ namespace CleanBox {
         public static void Export(IEnumerable<AppEntry> apps,string file) {
             Func<string,string> q=s=>{s=s??"";if(s.Length>0&&"=+-@\t\r\n".IndexOf(s[0])>=0)s="'"+s;return "\""+s.Replace("\"","\"\"")+"\"";};
             var lines=new List<string>{"名称,版本,发布者,来源,安装位置,程序路径,大小（字节）,大小依据,大小说明"};
-            foreach(var a in apps) lines.Add(string.Join(",",new[]{a.Name,a.Version,a.Publisher,a.Source,a.Path,a.Executable,a.SizeBytes.HasValue?a.SizeBytes.Value.ToString(CultureInfo.InvariantCulture):"",a.SizeSource,a.SizeExplanation}.Select(q)));
+            foreach(var a in apps) lines.Add(string.Join(",",new[]{a.Name,a.Version,a.Publisher,a.DisplaySource,a.Path,a.Executable,a.SizeBytes.HasValue?a.SizeBytes.Value.ToString(CultureInfo.InvariantCulture):"",a.SizeSource,a.SizeExplanation}.Select(q)));
             File.WriteAllLines(file,lines, new UTF8Encoding(true));
         }
     }
@@ -128,18 +134,17 @@ namespace CleanBox {
                 try { using(var b=RegistryKey.OpenBaseKey(hive,view)) using(var root=b.OpenSubKey(Uninstall)) {
                     if(root==null) continue;
                     foreach(var key in root.GetSubKeyNames()) { token.ThrowIfCancellationRequested(); try { using(var k=root.OpenSubKey(key)) {
-                        if(k==null) continue; string name=V(k,"DisplayName"); if(string.IsNullOrWhiteSpace(name)) continue;
-                        var a=new AppEntry{Name=name,Version=V(k,"DisplayVersion"),Publisher=V(k,"Publisher"),Source=(hive==RegistryHive.LocalMachine?"已安装 · 全机":"已安装 · 当前用户")+(view==RegistryView.Registry64?" · 64位":" · 32位"),Command=V(k,"UninstallString"),Hive=hive,View=view,RegistryPath=Uninstall+"\\"+key,Protected=V(k,"SystemComponent")=="1"};
-                        string installLocation=V(k,"InstallLocation");
-                        a.InstallLocation=installLocation;
-                        a.Path=CleanPath(installLocation); a.Executable=IconPath(V(k,"DisplayIcon"));
+                        if(k==null) continue;
+                        var a=ReadRegistration(k, !verifyOnly);
+                        if(string.IsNullOrWhiteSpace(a.Name)) continue;
+                        a.Source=(hive==RegistryHive.LocalMachine?"已安装 · 全机":"已安装 · 当前用户")+(view==RegistryView.Registry64?" · 64位":" · 32位");
+                        a.Hive=hive; a.View=view; a.RegistryPath=Uninstall+"\\"+key;
+                        a.Path=CleanPath(a.InstallLocation);
                         if(a.Path.Length==0 && File.Exists(a.Executable)) a.Path=System.IO.Path.GetDirectoryName(a.Executable);
                         if(a.Path.Length==0) { string exe,args; if(ParseCommand(a.Command,out exe,out args) && System.IO.Path.IsPathRooted(exe) && File.Exists(exe)) a.Path=System.IO.Path.GetDirectoryName(exe); }
                         if(!verifyOnly) {
-                            a.SizeBytes=FileSizes.FromEstimatedKilobytes(k.GetValue("EstimatedSize"));
-                            a.SizeKind=AppSizeKind.RegisteredEstimate;
-                            if(!a.SizeBytes.HasValue&&!a.Protected) {
-                                try { sizes.Fill(a,installLocation,token); }
+                            if(!a.SizeBytes.HasValue&&!a.Protected&&!a.NeedsRegistrationReview) {
+                                try { sizes.Fill(a,a.InstallLocation,token); }
                                 catch(IOException) { a.SizeNote="目录不可访问或路径无效。"; }
                                 catch(UnauthorizedAccessException) { a.SizeNote="没有读取安装目录的权限。"; }
                                 catch(System.Security.SecurityException) { a.SizeNote="系统限制了安装目录的读取权限。"; }
@@ -151,13 +156,71 @@ namespace CleanBox {
             }
         }
         internal static string V(RegistryKey k,string name) { return Convert.ToString(k.GetValue(name,"")); }
+
+        internal static AppEntry ReadRegistration(RegistryKey key, bool assess) {
+            string icon = IconFile(V(key, "DisplayIcon"));
+            var app = new AppEntry {
+                Name = V(key, "DisplayName"), Version = V(key, "DisplayVersion"), Publisher = V(key, "Publisher"),
+                Protected = V(key, "SystemComponent") == "1", InstallLocation = V(key, "InstallLocation"),
+                Executable = CleanPath(icon), Command = V(key, "UninstallString"),
+                QuietCommand = V(key, "QuietUninstallString"), ModifyCommand = V(key, "ModifyPath")
+            };
+            if (assess && !string.IsNullOrWhiteSpace(app.Name)) {
+                app.SizeBytes = FileSizes.FromEstimatedKilobytes(key.GetValue("EstimatedSize"));
+                app.SizeKind = AppSizeKind.RegisteredEstimate;
+                app.Registration = AssessRegistration(app, icon, V(key, "WindowsInstaller") == "1");
+            }
+            return app;
+        }
+
+        internal static RegistryStatus AssessRegistration(AppEntry app, string icon, bool windowsInstaller) {
+            if (app.Protected || windowsInstaller) return RegistryStatus.Registered;
+            var paths = new List<string> { app.InstallLocation, icon };
+            foreach (string command in new[] { app.Command, app.QuietCommand, app.ModifyCommand }) {
+                if (string.IsNullOrWhiteSpace(command)) continue;
+                string exe, args;
+                if (!ParseCommand(command, out exe, out args) ||
+                    Regex.IsMatch(exe, @"(^|[\\/])msiexec\.exe$", RegexOptions.IgnoreCase)) return RegistryStatus.Registered;
+                paths.Add(exe);
+            }
+            var evidence = paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (evidence.Length > 0) return evidence.All(IsMissingLocalPath) ? RegistryStatus.Stale : RegistryStatus.Registered;
+            return string.IsNullOrWhiteSpace(app.Version) && !app.SizeBytes.HasValue ? RegistryStatus.Incomplete : RegistryStatus.Registered;
+        }
+
+        internal static bool IsMissingLocalPath(string value) {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            try {
+                string path = Safety.Normalize(Environment.ExpandEnvironmentVariables(value.Trim().Trim('"')));
+                var drive = new DriveInfo(Path.GetPathRoot(path));
+                if (drive.DriveType != DriveType.Fixed || !drive.IsReady) return false;
+                try { File.GetAttributes(path); return false; }
+                catch (FileNotFoundException) { }
+                catch (DirectoryNotFoundException) { }
+                // A missing child under an inaccessible or redirected directory is inconclusive.
+                for (string parent = Path.GetDirectoryName(path); parent != null; parent = Path.GetDirectoryName(parent)) {
+                    try {
+                        var attributes = File.GetAttributes(parent);
+                        if ((attributes & FileAttributes.Directory) == 0 || (attributes & FileAttributes.ReparsePoint) != 0) return false;
+                    } catch (FileNotFoundException) { }
+                    catch (DirectoryNotFoundException) { }
+                }
+                return true;
+            } catch (IOException) { return false; }
+            catch (ArgumentException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+            catch (NotSupportedException) { return false; }
+            catch (System.Security.SecurityException) { return false; }
+        }
+
         public static string CleanPath(string path) {
             try {
                 path = Environment.ExpandEnvironmentVariables((path ?? "").Trim().Trim('"'));
                 return string.IsNullOrWhiteSpace(path) ? "" : Safety.TrimTrailingSeparators(System.IO.Path.GetFullPath(path));
             } catch { return ""; }
         }
-        internal static string IconPath(string p) { return CleanPath(Regex.Replace(p??"",@",\s*-?\d+\s*$", "")); }
+        static string IconFile(string p) { return Regex.Replace(p??"",@",\s*-?\d+\s*$", ""); }
+        internal static string IconPath(string p) { return CleanPath(IconFile(p)); }
         public static bool ParseCommand(string command,out string exe,out string args) {
             exe="";args=""; string s=Environment.ExpandEnvironmentVariables((command??"").Trim());
             if(s.StartsWith("\"")) { int end=s.IndexOf('"',1); if(end<2) return false; exe=s.Substring(1,end-1);args=s.Substring(end+1).Trim(); }

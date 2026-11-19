@@ -42,7 +42,7 @@ namespace CleanBox {
             var listing=new CanvasPanel{Dock=DockStyle.Fill,Padding=new Padding(0,0,16,0)};
             var filters=new CanvasTablePanel{Dock=DockStyle.Top,Height=43,ColumnCount=3,RowCount=1};filters.RowStyles.Add(new RowStyle(SizeType.Percent,100));filters.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));filters.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,132));filters.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,96));
             search=new TextBox{Dock=DockStyle.Fill,Margin=new Padding(0,5,12,4),AccessibleName="搜索名称、发布者或路径"};search.TextChanged+=(s,e)=>ScheduleSearch();search.KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Enter){ApplyFilter();e.SuppressKeyPress=true;}};
-            filter=new ChoiceButton{Dock=DockStyle.Fill,Margin=new Padding(0,0,0,0)};filter.Items.AddRange(new object[]{"全部来源","已安装","应用商店","绿色候选","快捷方式","磁盘发现"});filter.SelectedIndex=0;filter.SelectedIndexChanged+=(s,e)=>ApplyFilter();filters.Controls.Add(Input(search,new Padding(0,3,12,3)),0,0);filters.Controls.Add(filter,1,0);
+            filter=new ChoiceButton{Dock=DockStyle.Fill,Margin=new Padding(0,0,0,0)};filter.Items.AddRange(new object[]{"全部软件","已安装","应用商店","绿色候选","快捷方式","磁盘发现","待核实登记"});filter.SelectedIndex=0;filter.SelectedIndexChanged+=(s,e)=>ApplyFilter();filters.Controls.Add(Input(search,new Padding(0,3,12,3)),0,0);filters.Controls.Add(filter,1,0);
             advancedButton=new UiButton{Text="筛选 · 1",Dock=DockStyle.Fill,Margin=new Padding(6,0,0,0)};advancedButton.Click+=(s,e)=>ToggleFilters();filters.Controls.Add(advancedButton,2,0);
             var advanced=BuildFilters();var summary=BuildFilterSummary();
             var searchHint=TextLabel("搜索名称、发布者或路径  ·  Ctrl + F",25,"muted");

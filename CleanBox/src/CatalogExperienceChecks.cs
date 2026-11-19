@@ -49,6 +49,17 @@ namespace CleanBox {
                 check(fixture.SizeBytes == 8192 && fixture.SizeKind == AppSizeKind.InstallDirectory && detail.Text.Contains("8 KB") && fixture.SizeBadge == "目录实测", "Single-app remeasurement updates both numeric data and its scope label");
                 ApplyRegistrationResult(fixture, RegistrationState.Present);
                 check(apps.Contains(fixture), "An existing registration stays in the catalog after follow-up");
+                ApplyRegistrationResult(fixture, RegistrationState.Stale);
+                check(!grid.Rows.Cast<DataGridViewRow>().Any(r => r.Tag == fixture && r.Visible), "A stale installation immediately disappears from the default search");
+                filter.SelectedIndex = 1;
+                check(!grid.Rows.Cast<DataGridViewRow>().Any(r => r.Tag == fixture && r.Visible), "The installed filter also hides stale registrations");
+                filter.SelectedIndex = RegistryReviewFilter;
+                check(grid.Rows.Cast<DataGridViewRow>().Any(r => r.Tag == fixture && r.Visible && Equals(r.Cells[2].Value, "失效登记")), "Stale registrations remain searchable in the review filter with their correct status");
+                ApplyRegistrationResult(fixture, RegistrationState.Incomplete);
+                check(grid.Rows.Cast<DataGridViewRow>().Any(r => r.Tag == fixture && r.Visible && Equals(r.Cells[2].Value, "登记待核实")), "Incomplete registry metadata is marked as unverified");
+                ApplyRegistrationResult(fixture, RegistrationState.Present);
+                filter.SelectedIndex = 0;
+                check(grid.Rows.Cast<DataGridViewRow>().Any(r => r.Tag == fixture && r.Visible), "A verified registration returns to regular search");
                 RememberUninstall(fixture); ApplyRegistrationResult(fixture, RegistrationState.Missing);
                 check(!apps.Contains(fixture) && pendingUninstalls.Contains(fixture), "An absent registration removes the catalog entry while keeping residual follow-up available");
                 var reinstalled = new AppEntry { Name = fixture.Name, RegistryPath = fixture.RegistryPath,
@@ -58,6 +69,14 @@ namespace CleanBox {
                 check(pendingUninstalls.Single(a => a.Id == fixture.Id) == reinstalled, "Repeat uninstall and later recheck leave the new location on the follow-up menu");
                 FinishUninstallReview(reinstalled);
                 check(!pendingUninstalls.Any(a => a.Id == fixture.Id), "Only explicit completion removes a residual follow-up");
+                string deletedExe = Path.Combine(fixture.InstallLocation, "removed.exe");
+                File.WriteAllText(deletedExe, "fixture");
+                var deleted = new AppEntry { Name = prefix + " removed", Executable = deletedExe, Path = fixture.InstallLocation, Source = "磁盘发现" };
+                fixtures.Add(deleted);
+                Add(deleted);
+                File.Delete(deletedExe);
+                await RefreshCatalogAfterCleanup(deletedExe);
+                check(!apps.Contains(deleted) && !ids.Contains(deleted.Id), "Cleanup removes missing discovered executables from the catalog without a full scan");
                 await VerifyResidualDialog(check);
             } finally {
                 var owned = new HashSet<AppEntry>(fixtures);

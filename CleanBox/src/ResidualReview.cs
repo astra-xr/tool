@@ -9,7 +9,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 namespace CleanBox {
-    internal enum RegistrationState { Present, Missing, Unknown, Unregistered }
+    internal enum RegistrationState { Present, Missing, Unknown, Unregistered, Stale, Incomplete }
 
     internal sealed class ResidualCandidate {
         internal string Path, Evidence;
@@ -30,8 +30,15 @@ namespace CleanBox {
                 if (app.RegistryPath.Length == 0) return RegistrationState.Unregistered;
                 if (!app.RegistryPath.StartsWith(Scanner.Uninstall + "\\", StringComparison.OrdinalIgnoreCase)) return RegistrationState.Unknown;
                 using (var hive = RegistryKey.OpenBaseKey(app.Hive, app.View))
-                using (var key = hive.OpenSubKey(app.RegistryPath))
-                    return key == null ? RegistrationState.Missing : RegistrationState.Present;
+                using (var key = hive.OpenSubKey(app.RegistryPath)) {
+                    if (key == null) return RegistrationState.Missing;
+                    var current = Scanner.ReadRegistration(key, true);
+                    if (string.IsNullOrWhiteSpace(current.Name)) return RegistrationState.Incomplete;
+                    if (!current.Name.Equals(app.Name, StringComparison.OrdinalIgnoreCase)) return RegistrationState.Unknown;
+                    if (current.Registration == RegistryStatus.Stale) return RegistrationState.Stale;
+                    if (current.Registration == RegistryStatus.Incomplete) return RegistrationState.Incomplete;
+                    return RegistrationState.Present;
+                }
             } catch (OperationCanceledException) { throw; }
             catch (Exception) { return RegistrationState.Unknown; }
         }
@@ -40,15 +47,20 @@ namespace CleanBox {
             switch (state) {
                 case RegistrationState.Missing: return "此项安装登记已移除；下方仅列出仍存在的候选目录。";
                 case RegistrationState.Present: return "安装登记仍存在，可能尚未完成或已取消卸载。完成后可再次核对。";
+                case RegistrationState.Stale: return "卸载登记仍在，但登记指向的本地路径已不存在。此项已从软件清单的默认搜索中移除。";
+                case RegistrationState.Incomplete: return "卸载登记缺少可核实的安装信息。此项可在「待核实登记」中查看。";
                 case RegistrationState.Unregistered: return "该项未登记卸载信息，请核对候选路径是否确实属于此软件。";
                 default: return "暂时无法核实安装登记，未将此项标记为已卸载。";
             }
         }
 
+        internal static bool CanRecycle(RegistrationState state) {
+            return state == RegistrationState.Missing || state == RegistrationState.Unregistered;
+        }
+
         internal static void EnsureCanRecycle(AppEntry app, string path, CancellationToken token) {
             var state = Probe(app, token);
-            if (state == RegistrationState.Present || state == RegistrationState.Unknown)
-                throw new IOException(Describe(state));
+            if (!CanRecycle(state)) throw new IOException(Describe(state));
 
             AppEntry owner = null;
             Action<AppEntry> check = current => {
@@ -158,15 +170,29 @@ namespace CleanBox {
         }
 
         void ApplyRegistrationResult(AppEntry app, RegistrationState state) {
-            if (state != RegistrationState.Missing) return;
-            RememberUninstall(app);
-            var old = apps.FirstOrDefault(a => a.Id == app.Id);
-            if (old != null) {
-                var row = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == old);
+            if (state == RegistrationState.Missing) RememberUninstall(app);
+            if (UpdateCatalogRegistration(app, state)) { RebuildCatalogIndex(); ApplyFilter(); }
+        }
+
+        bool UpdateCatalogRegistration(AppEntry app, RegistrationState state) {
+            if (state == RegistrationState.Unknown || state == RegistrationState.Unregistered) return false;
+            var old = apps.FirstOrDefault(a => a.Id.Equals(app.Id, StringComparison.OrdinalIgnoreCase));
+            if (old == null) return false;
+            var row = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag == old);
+            if (state == RegistrationState.Missing) {
+                apps.Remove(old); ids.Remove(old.Id);
                 if (row != null) grid.Rows.Remove(row);
-                apps.Remove(old); ids.Remove(old.Id); RebuildCatalogIndex(); ApplyFilter();
+                return true;
             }
-            UpdateUninstallFollowup();
+            var registration = state == RegistrationState.Stale ? RegistryStatus.Stale
+                : state == RegistrationState.Incomplete ? RegistryStatus.Incomplete : RegistryStatus.Registered;
+            if (old.Registration == registration) return false;
+            old.Registration = registration;
+            if (row != null) {
+                row.Cells[2].Value = CatalogSource(old);
+                row.Cells[2].ToolTipText = old.DisplaySource;
+            }
+            return true;
         }
 
         void ShowResidualReview(AppEntry app, bool afterLaunch, Action<Form> ready = null) {
@@ -194,7 +220,7 @@ namespace CleanBox {
                 Action selectionChanged = () => {
                     var candidate = selected();
                     open.Enabled = fileTools.Enabled = candidate != null && !running;
-                    recycle.Enabled = candidate != null && !running && (state == RegistrationState.Missing || state == RegistrationState.Unregistered);
+                    recycle.Enabled = candidate != null && !running && ResidualReview.CanRecycle(state);
                     if (candidate != null) preview.Text = candidate.Path + "\r\n" + candidate.DisplaySize + " · " + candidate.Evidence + "\r\n" + candidate.Size.Note
                         + "\r\n处理范围：该目标及其全部内容。配置目录可能包含个人数据；不会自动批量清理。";
                 };
@@ -213,7 +239,7 @@ namespace CleanBox {
                         }
                         list.ClearSelection(); list.CurrentCell = null;
                         note.Text = ResidualReview.Describe(state) + "\r\n" + (result.Item2.Count == 0 ? "未找到安全范围内的明确候选路径。" : "找到 " + result.Item2.Count + " 个候选位置。逐项核对后优先移到回收站。")
-                            + (state == RegistrationState.Present || state == RegistrationState.Unknown ? " 如需手动处理，可进入文件解锁页。" : "");
+                            + (!ResidualReview.CanRecycle(state) ? " 如需手动处理，可进入文件解锁页。" : "");
                         preview.Text = "选择一项查看完整路径、大小依据与处理范围。\r\n同名目录仅是候选，不能据此确认归属。";
                         ApplyRegistrationResult(app, state);
                         Store.Log("卸载核对：" + app.Name + "；" + ResidualReview.Describe(state) + "；候选 " + result.Item2.Count);
