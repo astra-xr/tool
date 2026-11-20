@@ -1,0 +1,55 @@
+name: Release safeTriage preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - safeTriage/RELEASE.md
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: safetriage-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: safeTriage
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the Windows x64 executable
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = 'safeTriage-Windows-x64.exe'
+          ./build.ps1 -OutputName $app
+          $file = Get-Item -LiteralPath $app
+          $version = [version]$file.VersionInfo.FileVersion
+          $tag = "safetriage-v$($version.ToString(3))"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $app).Hash.ToLowerInvariant()
+          "$hash  $app" | Set-Content -LiteralPath "$app.sha256" -Encoding ascii
+          "SAFETRIAGE_TAG=$tag" >> $env:GITHUB_ENV
+          "SAFETRIAGE_VERSION=$($version.ToString(3))" >> $env:GITHUB_ENV
+      - name: Publish the preview and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:SAFETRIAGE_TAG
+          $existing = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the current releases.' }
+          if ($tag -in $existing.tagName) {
+              Write-Host "Release $tag is already published."
+              exit 0
+          }
+          $app = 'safeTriage-Windows-x64.exe'
+          gh release create $tag $app "$app.sha256" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "安诊 safeTriage $env:SAFETRIAGE_VERSION" --notes-file RELEASE.md --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the preview.' }

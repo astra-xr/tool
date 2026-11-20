@@ -1,0 +1,546 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="安诊 · safeTriage" Width="1120" Height="770" MinWidth="880" MinHeight="610"
+        WindowStartupLocation="CenterScreen" Background="#0B131D" Foreground="#EAF1F4"
+        FontFamily="Microsoft YaHei UI" FontSize="14" UseLayoutRounding="True">
+    <Window.Resources>
+        <SolidColorBrush x:Key="Ink" Color="#EAF1F4"/>
+        <SolidColorBrush x:Key="Muted" Color="#A9BDC9"/>
+        <SolidColorBrush x:Key="Accent" Color="#A5E9DB"/>
+        <LinearGradientBrush x:Key="Glass" StartPoint="0,0" EndPoint="0.7,1">
+            <GradientStop Color="#D0334651" Offset="0"/>
+            <GradientStop Color="#DD21323D" Offset="0.48"/>
+            <GradientStop Color="#F015232E" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="Edge" StartPoint="0,0" EndPoint="0.82,1">
+            <GradientStop Color="#885B7E88" Offset="0"/>
+            <GradientStop Color="#77324B57" Offset="1"/>
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="HeroEdge" StartPoint="0,1" EndPoint="1,0">
+            <GradientStop Color="#435767" Offset="0"/>
+            <GradientStop Color="#4D6976" Offset="0.5"/>
+            <GradientStop Color="#A0C8C2" Offset="0.87"/>
+            <GradientStop Color="#63878A" Offset="1"/>
+        </LinearGradientBrush>
+        <RadialGradientBrush x:Key="PointerFill" MappingMode="Absolute" RadiusX="34" RadiusY="23">
+            <GradientStop Color="#42DAFFF2" Offset="0"/>
+            <GradientStop Color="#2386F5D9" Offset="0.48"/>
+            <GradientStop Color="#0086F5D9" Offset="1"/>
+        </RadialGradientBrush>
+        <RadialGradientBrush x:Key="PointerRim" MappingMode="Absolute" RadiusX="51" RadiusY="47">
+            <GradientStop Color="#FFF4FFFB" Offset="0"/>
+            <GradientStop Color="#DFC9FFF1" Offset="0.34"/>
+            <GradientStop Color="#739AFBE4" Offset="0.71"/>
+            <GradientStop Color="#009AFBE4" Offset="1"/>
+        </RadialGradientBrush>
+        <Style x:Key="PointerLight" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource PointerFill}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PointerRim}"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+            <Setter Property="Opacity" Value="0"/>
+        </Style>
+        <Style x:Key="Tile" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource Glass}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Edge}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="16"/>
+            <Setter Property="Padding" Value="17,14"/>
+        </Style>
+        <Style x:Key="SummaryTile" TargetType="Border" BasedOn="{StaticResource Tile}">
+            <Setter Property="Background" Value="#DF203943"/>
+            <Setter Property="BorderBrush" Value="#537F7E"/>
+        </Style>
+        <Style x:Key="BaseButton" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="18,10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Face" CornerRadius="21" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"/>
+                            <Border x:Name="PointerGlow" CornerRadius="21" Style="{StaticResource PointerLight}"/>
+                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                    <Condition Property="IsEnabled" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="PointerGlow" Property="Opacity" Value="1"/>
+                            </MultiTrigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Face" Property="Opacity" Value="0.78"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Face" Property="BorderBrush" Value="#E6FFF7"/>
+                                <Setter TargetName="Face" Property="BorderThickness" Value="2"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Face" Property="Opacity" Value="0.68"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+            <Style.Resources>
+                <RadialGradientBrush x:Key="PointerFill" MappingMode="Absolute" RadiusX="38" RadiusY="27">
+                    <GradientStop Color="#F8FFFFFF" Offset="0"/>
+                    <GradientStop Color="#A6FFFFFF" Offset="0.36"/>
+                    <GradientStop Color="#448EFFE4" Offset="0.73"/>
+                    <GradientStop Color="#008EFFE4" Offset="1"/>
+                </RadialGradientBrush>
+            </Style.Resources>
+            <Setter Property="Foreground" Value="#102B2A"/>
+            <Setter Property="BorderBrush" Value="#D8FFF4"/>
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0.1,0" EndPoint="0.95,1">
+                        <GradientStop Color="#DCFFF5" Offset="0"/>
+                        <GradientStop Color="#A9EBDD" Offset="0.38"/>
+                        <GradientStop Color="#83CFC0" Offset="1"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+            <Setter Property="Background" Value="#233A45"/>
+            <Setter Property="BorderBrush" Value="#4B7278"/>
+            <Setter Property="Foreground" Value="#CBEEE8"/>
+        </Style>
+        <Style x:Key="Navigation" TargetType="ToggleButton">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="16,9"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid>
+                            <Border x:Name="Face" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="17"/>
+                            <Border x:Name="PointerGlow" CornerRadius="17" Style="{StaticResource PointerLight}"/>
+                            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Face" Property="Background" Value="#2B404B"/>
+                                <Setter TargetName="PointerGlow" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Face" Property="Background" Value="#39555C"/>
+                                <Setter TargetName="Face" Property="BorderBrush" Value="#618787"/>
+                                <Setter Property="Foreground" Value="#E3F8F4"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Face" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="TileIcon" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="Field" TargetType="TextBox">
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+            <Setter Property="Background" Value="#B20D1923"/>
+            <Setter Property="BorderBrush" Value="#55717C"/>
+            <Setter Property="SelectionBrush" Value="#438278"/>
+            <Setter Property="CaretBrush" Value="{StaticResource Accent}"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Padding" Value="13,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Frame" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="10">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Frame" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ScanProgress" TargetType="ProgressBar">
+            <Setter Property="Height" Value="3"/>
+            <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+            <Setter Property="Background" Value="#3A535C"/>
+            <Setter Property="IsIndeterminate" Value="True"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+        </Style>
+        <Style x:Key="FindingHeader" TargetType="ToggleButton">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="HitArea" Background="Transparent" BorderBrush="Transparent"
+                                BorderThickness="1" CornerRadius="9" Padding="7,4">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Path x:Name="Chevron" Data="M1,2 L5,6 L9,2" Stroke="#AAD5D0" StrokeThickness="1.5"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      HorizontalAlignment="Left" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                    <Path.RenderTransform><RotateTransform Angle="-90"/></Path.RenderTransform>
+                                </Path>
+                                <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="HitArea" Property="Background" Value="#28434D"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="HitArea" Property="BorderBrush" Value="{StaticResource Accent}"/></Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chevron" Property="RenderTransform"><Setter.Value><RotateTransform Angle="0"/></Setter.Value></Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="FindingExpander" TargetType="Expander">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <StackPanel>
+                            <ToggleButton x:Name="HeaderToggle" Style="{StaticResource FindingHeader}" Content="{TemplateBinding Header}"
+                                          IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <ContentPresenter x:Name="Details" ContentSource="Content" Visibility="Collapsed" Margin="32,1,7,4"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="True"><Setter TargetName="Details" Property="Visibility" Value="Visible"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="9"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.DecreaseRepeatButton><RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" Focusable="False"/></Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton><RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" Focusable="False"/></Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb MinHeight="24">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border x:Name="Bar" Background="#58717F" CornerRadius="3" Margin="2,0,1,0"/>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bar" Property="Background" Value="#8DB3B1"/></Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.Background>
+            <RadialGradientBrush Center="0.76,0.12" GradientOrigin="0.76,0.12" RadiusX="0.68" RadiusY="0.89">
+                <GradientStop Color="#25474E" Offset="0"/>
+                <GradientStop Color="#142633" Offset="0.45"/>
+                <GradientStop Color="#0B131D" Offset="1"/>
+            </RadialGradientBrush>
+        </Grid.Background>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Border Margin="30,19,30,0" Padding="13,8" CornerRadius="21" BorderThickness="1"
+                MaxWidth="1160" Background="{StaticResource Glass}" BorderBrush="{StaticResource Edge}">
+            <Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="2,0,0,0">
+                    <Border Width="36" Height="36" CornerRadius="11" BorderThickness="1" BorderBrush="#699B99" Background="#284950">
+                        <Canvas Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path Data="M12,2.5 L20,6 L20,12.5 C20,16.5 16.3,20 12,22 C7.7,20 4,16.5 4,12.5 L4,6 Z"
+                                  Stroke="#C9F2EB" StrokeThickness="1.5" StrokeLineJoin="Round"/>
+                            <Path Data="M8,12 L10.6,14.6 L16.1,9" Stroke="#C9F2EB" StrokeThickness="1.6"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                        </Canvas>
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="安诊" FontSize="18" FontWeight="Bold"/>
+                        <TextBlock Text="safeTriage" FontFamily="Segoe UI" FontSize="11" Foreground="{StaticResource Muted}"/>
+                    </StackPanel>
+                </StackPanel>
+                <Border HorizontalAlignment="Center" CornerRadius="21" Padding="3" Background="#A1112029" BorderBrush="#425C66" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton x:Name="HomeNav" Content="快速排查" Style="{StaticResource Navigation}" IsChecked="True"/>
+                        <ToggleButton x:Name="NetworkNav" Content="网络排查" Style="{StaticResource Navigation}" Margin="3,0,0,0"/>
+                        <ToggleButton x:Name="SpecialNav" Content="专项排查" Style="{StaticResource Navigation}" Margin="3,0,0,0"/>
+                        <ToggleButton x:Name="TimelineNav" Content="故障时间线" Style="{StaticResource Navigation}" Margin="3,0,0,0"/>
+                    </StackPanel>
+                </Border>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <Ellipse Fill="{StaticResource Accent}" Width="6" Height="6" Margin="0,1,7,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="只读检测" FontSize="12" Foreground="{StaticResource Muted}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+        <Border x:Name="OperationBanner" Grid.Row="1" Style="{StaticResource SummaryTile}" MaxWidth="1160" Margin="30,9,30,0"
+                Padding="13,6" Visibility="Collapsed">
+            <DockPanel>
+                <Button x:Name="StopCapture" DockPanel.Dock="Right" Content="结束记录" Style="{StaticResource SecondaryButton}"
+                        Padding="11,5" Margin="9,0,0,0" Visibility="Collapsed"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="OperationStatus" Foreground="{StaticResource Accent}" FontSize="13" TextWrapping="Wrap"/>
+                    <ProgressBar Style="{StaticResource ScanProgress}" Visibility="Visible" Width="108" HorizontalAlignment="Left" Margin="0,5,0,1"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <ScrollViewer x:Name="ContentScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid Margin="30,22,30,30" MaxWidth="1160">
+                <StackPanel x:Name="HomePage">
+                    <Border x:Name="QuickHero" CornerRadius="26" BorderBrush="{StaticResource HeroEdge}" BorderThickness="1" MinHeight="265">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0.83" EndPoint="1,0.13">
+                                <GradientStop Color="#14232E" Offset="0"/>
+                                <GradientStop Color="#1D3441" Offset="0.52"/>
+                                <GradientStop Color="#2D515B" Offset="0.84"/>
+                                <GradientStop Color="#3B6468" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Grid>
+                            <Border CornerRadius="25" IsHitTestVisible="False">
+                                <Border.Background>
+                                    <RadialGradientBrush Center="0.77,0.11" GradientOrigin="0.91,0.02" RadiusX="0.52" RadiusY="0.87">
+                                        <GradientStop Color="#78C6EAE5" Offset="0"/>
+                                        <GradientStop Color="#217BCBBC" Offset="0.45"/>
+                                        <GradientStop Color="#007BCBBC" Offset="1"/>
+                                    </RadialGradientBrush>
+                                </Border.Background>
+                            </Border>
+                            <Grid Margin="34,19,23,19">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="57*"/><ColumnDefinition Width="43*"/></Grid.ColumnDefinitions>
+                                <Viewbox x:Name="QuickIllustration" Grid.Column="1" Height="222" VerticalAlignment="Center" IsHitTestVisible="False">
+                                    <Canvas Width="380" Height="244">
+                                        <Ellipse Canvas.Left="38" Canvas.Top="70" Width="307" Height="164">
+                                            <Ellipse.Fill>
+                                                <RadialGradientBrush>
+                                                    <GradientStop Color="#697BDDCF" Offset="0"/>
+                                                    <GradientStop Color="#0067D4C6" Offset="1"/>
+                                                </RadialGradientBrush>
+                                            </Ellipse.Fill>
+                                        </Ellipse>
+                                        <Ellipse Canvas.Left="78" Canvas.Top="9" Width="226" Height="226" Stroke="#6792AEAF"/>
+                                        <Ellipse Canvas.Left="94" Canvas.Top="25" Width="194" Height="194" StrokeThickness="8">
+                                            <Ellipse.Stroke>
+                                                <LinearGradientBrush StartPoint="0.86,0.09" EndPoint="0.16,1">
+                                                    <GradientStop Color="#BAD9F2ED" Offset="0"/>
+                                                    <GradientStop Color="#9B3A666C" Offset="0.37"/>
+                                                    <GradientStop Color="#50A9DCD3" Offset="0.64"/>
+                                                    <GradientStop Color="#8270AEA8" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Ellipse.Stroke>
+                                        </Ellipse>
+                                        <Ellipse Canvas.Left="107" Canvas.Top="38" Width="168" Height="168" StrokeThickness="1.5">
+                                            <Ellipse.Fill>
+                                                <RadialGradientBrush Center="0.64,0.24" GradientOrigin="0.74,0.13" RadiusX="0.93" RadiusY="0.84">
+                                                    <GradientStop Color="#9094D5D0" Offset="0"/>
+                                                    <GradientStop Color="#8656868A" Offset="0.34"/>
+                                                    <GradientStop Color="#AE1F3B49" Offset="0.73"/>
+                                                    <GradientStop Color="#55233A46" Offset="1"/>
+                                                </RadialGradientBrush>
+                                            </Ellipse.Fill>
+                                            <Ellipse.Stroke>
+                                                <LinearGradientBrush StartPoint="0,1" EndPoint="0.98,0.05">
+                                                    <GradientStop Color="#A06FAEAA" Offset="0"/>
+                                                    <GradientStop Color="#496F9195" Offset="0.41"/>
+                                                    <GradientStop Color="#DBE6FCF6" Offset="0.83"/>
+                                                    <GradientStop Color="#5786AFAA" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Ellipse.Stroke>
+                                        </Ellipse>
+                                        <Path Data="M121,92 A79,79 0 0 1 236,56" StrokeThickness="4" StrokeStartLineCap="Round" StrokeEndLineCap="Round">
+                                            <Path.Stroke>
+                                                <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
+                                                    <GradientStop Color="#008BCDC6" Offset="0"/>
+                                                    <GradientStop Color="#AAF5FFFC" Offset="0.66"/>
+                                                    <GradientStop Color="#30F0FFFB" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Path.Stroke>
+                                        </Path>
+                                        <Path Data="M225,197 A84,84 0 0 1 129,184" Stroke="#8595DCD1" StrokeThickness="2"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                        <Path Data="M151,123 L169,123 L181,103 L195,142 L209,123 L230,123"
+                                              Stroke="#DAFCF4" StrokeThickness="2.5" StrokeLineJoin="Round"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                        <Ellipse Canvas.Left="278" Canvas.Top="51" Width="10" Height="10" Fill="#CBF9EF"/>
+                                        <Ellipse Canvas.Left="75" Canvas.Top="132" Width="5" Height="5" Fill="#9486D1C8"/>
+                                    </Canvas>
+                                </Viewbox>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="一键快速排查" FontSize="41" FontWeight="Bold" TextWrapping="Wrap"/>
+                                    <TextBlock Text="查找近期故障线索，查看具体处理建议。"
+                                               Foreground="#CADCE4" FontSize="15" LineHeight="25" TextWrapping="Wrap"
+                                               Margin="0,11,28,20" HorizontalAlignment="Left" MaxWidth="345"/>
+                                    <Button x:Name="QuickButton" Content="开始排查" Style="{StaticResource PrimaryButton}"
+                                            MinWidth="154" Padding="21,10" HorizontalAlignment="Left"/>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                    <StackPanel x:Name="HomePreview" Margin="0,23,0,0">
+                        <TextBlock Text="检查项目" FontSize="18" FontWeight="SemiBold" Margin="1,0,0,11"/>
+                        <UniformGrid Columns="4">
+                            <Border Style="{StaticResource Tile}" Margin="0,0,8,0">
+                                <StackPanel>
+                                    <TextBlock Text="&#xEDA2;" Style="{StaticResource TileIcon}"/>
+                                    <TextBlock Text="空间与性能" FontWeight="SemiBold"/>
+                                    <TextBlock Text="系统盘、CPU 与内存" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Tile}" Margin="3,0,5,0">
+                                <StackPanel>
+                                    <TextBlock Text="&#xE701;" Style="{StaticResource TileIcon}"/>
+                                    <TextBlock Text="网络与代理" FontWeight="SemiBold"/>
+                                    <TextBlock Text="网卡、网关与代理端口" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Tile}" Margin="6,0,2,0">
+                                <StackPanel>
+                                    <TextBlock Text="&#xE9D2;" Style="{StaticResource TileIcon}"/>
+                                    <TextBlock Text="蓝屏与异常重启" FontWeight="SemiBold"/>
+                                    <TextBlock Text="近 7 天的系统事件" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Tile}" Margin="9,0,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="&#xE895;" Style="{StaticResource TileIcon}"/>
+                                    <TextBlock Text="Windows 更新" FontWeight="SemiBold"/>
+                                    <TextBlock Text="近 7 天的安装失败记录" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
+                        <Border Style="{StaticResource Tile}" Margin="0,16,0,0">
+                            <DockPanel>
+                                <Button x:Name="NetworkShortcut" DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}"
+                                        Content="打开网络排查" VerticalAlignment="Center" Margin="12,0,0,0" Padding="15,8"/>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="网页打不开？" FontWeight="SemiBold"/>
+                                    <TextBlock Text="针对一个网站检测 DNS、HTTPS 和系统代理。" Foreground="{StaticResource Muted}"
+                                               FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                    </StackPanel>
+                    <StackPanel x:Name="QuickResults" Margin="0,20,0,0" Visibility="Collapsed"/>
+                </StackPanel>
+
+                <StackPanel x:Name="NetworkPage" Visibility="Collapsed">
+                    <Border Style="{StaticResource Tile}" Padding="26,22" CornerRadius="25" BorderBrush="{StaticResource HeroEdge}">
+                        <StackPanel>
+                            <TextBlock Text="网络排查" FontSize="32" FontWeight="Bold"/>
+                            <TextBlock Text="Wi-Fi 连着却打不开网页时，可以从 DNS 和代理查起。" Foreground="{StaticResource Muted}"
+                                       FontSize="15" TextWrapping="Wrap" Margin="0,6,0,21"/>
+                            <Label x:Name="TargetLabel" Padding="0" FontWeight="SemiBold" Foreground="{StaticResource Ink}" Content="打不开的网站"/>
+                            <DockPanel Margin="0,9,0,0">
+                                <Button x:Name="NetworkButton" Content="开始检测" Style="{StaticResource PrimaryButton}" DockPanel.Dock="Right" Margin="11,0,0,0"/>
+                                <TextBox x:Name="NetworkTarget" Text="www.microsoft.com" Style="{StaticResource Field}" MaxLength="500" AutomationProperties.Name="目标网站"/>
+                            </DockPanel>
+                            <TextBlock x:Name="NetworkInputError" Visibility="Collapsed" Foreground="#FFC2B9" FontSize="13" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                            <TextBlock Text="输入域名或 HTTPS 地址。只测试网站首页，自选网站会与 www.microsoft.com 对照。"
+                                       Foreground="{StaticResource Muted}" FontSize="13" TextWrapping="Wrap" Margin="0,11,0,0"/>
+                            <DockPanel Margin="0,14,0,0">
+                                <Button x:Name="NetworkRecordButton" DockPanel.Dock="Right" Content="记录 60 秒" Style="{StaticResource SecondaryButton}"
+                                        Padding="14,7" Margin="11,0,0,0" VerticalAlignment="Center"/>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="间歇性断网" FontWeight="SemiBold"/>
+                                    <TextBlock Text="连续记录网关、DNS 和 HTTPS。遇到断网时保持页面打开，或提前结束记录。" TextWrapping="Wrap"
+                                               Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel x:Name="NetworkPreview" Margin="0,22,0,0">
+                        <TextBlock Text="检测范围" FontSize="18" FontWeight="SemiBold" Margin="1,0,0,11"/>
+                        <UniformGrid Columns="2">
+                            <Border Style="{StaticResource Tile}" Margin="0,0,6,0">
+                                <StackPanel>
+                                    <TextBlock Text="本机连接与域名解析" FontWeight="SemiBold"/>
+                                    <TextBlock Text="查看网卡、网关、代理配置，以及本机能否解析目标域名。" Foreground="{StaticResource Muted}"
+                                               FontSize="13" LineHeight="21" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Tile}" Margin="6,0,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="HTTPS 与系统代理" FontWeight="SemiBold"/>
+                                    <TextBlock Text="分别测试使用系统代理设置和应用不使用代理的请求。两种请求都可能经过 VPN。"
+                                               Foreground="{StaticResource Muted}" FontSize="13" LineHeight="21" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
+                    </StackPanel>
+                    <StackPanel x:Name="NetworkResults" Margin="0,20,0,0" Visibility="Collapsed"/>
+                </StackPanel>
+                <StackPanel x:Name="SpecialPage" Visibility="Collapsed">
+                    <TextBlock Text="专项排查" FontSize="32" FontWeight="Bold"/>
+                    <TextBlock Text="按碰到的现象选择一个项目。" Foreground="{StaticResource Muted}" FontSize="15" Margin="0,6,0,18"/>
+                    <UniformGrid Columns="2">
+                        <Border Style="{StaticResource Tile}" Margin="0,0,6,10">
+                            <StackPanel>
+                                <TextBlock Text="电脑卡顿" FontSize="17" FontWeight="SemiBold"/>
+                                <TextBlock Text="复现时记录 30 秒，查看进程负载和磁盘活动。" Foreground="{StaticResource Muted}"
+                                           FontSize="13" Margin="0,5,0,11" TextWrapping="Wrap"/>
+                                <Button x:Name="PerformanceButton" Style="{StaticResource PrimaryButton}" Content="记录卡顿现场" HorizontalAlignment="Left" Padding="14,7"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Tile}" Margin="6,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="耳机或扬声器没声" FontSize="17" FontWeight="SemiBold"/>
+                                <TextBlock Text="核对可用输出、默认设备和音频服务。" Foreground="{StaticResource Muted}"
+                                           FontSize="13" Margin="0,5,0,11" TextWrapping="Wrap"/>
+                                <Button x:Name="AudioButton" Style="{StaticResource SecondaryButton}" Content="检测声音" HorizontalAlignment="Left" Padding="14,7"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Tile}" Margin="0,0,6,0">
+                            <StackPanel>
+                                <TextBlock Text="USB 插上没反应" FontSize="17" FontWeight="SemiBold"/>
+                                <TextBlock Text="查看识别情况和设备问题代码，支持插拔后复查。" Foreground="{StaticResource Muted}"
+                                           FontSize="13" Margin="0,5,0,11" TextWrapping="Wrap"/>
+                                <Button x:Name="UsbButton" Style="{StaticResource SecondaryButton}" Content="检测 USB" HorizontalAlignment="Left" Padding="14,7"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Tile}" Margin="6,0,0,0">
+                            <StackPanel>
+                                <TextBlock Text="开机很慢" FontSize="17" FontWeight="SemiBold"/>
+                                <TextBlock Text="比较近期启动耗时，查找应用、驱动和服务延迟线索。" Foreground="{StaticResource Muted}"
+                                           FontSize="13" Margin="0,5,0,11" TextWrapping="Wrap"/>
+                                <Button x:Name="StartupButton" Style="{StaticResource SecondaryButton}" Content="检测启动" HorizontalAlignment="Left" Padding="14,7"/>
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+                    <StackPanel x:Name="SpecialResults" Margin="0,18,0,0" Visibility="Collapsed"/>
+                </StackPanel>
+                <StackPanel x:Name="TimelinePage" Visibility="Collapsed">
+                    <Border Style="{StaticResource Tile}" Padding="26,22" CornerRadius="25" BorderBrush="{StaticResource HeroEdge}">
+                        <StackPanel>
+                            <TextBlock Text="故障时间线" FontSize="32" FontWeight="Bold"/>
+                            <TextBlock Text="查找同一时段的闪退、蓝屏、重启、显示驱动、硬件和更新记录。" Foreground="{StaticResource Muted}"
+                                       FontSize="15" TextWrapping="Wrap" Margin="0,6,0,17"/>
+                            <Label x:Name="TimelineLabel" Padding="0" Foreground="{StaticResource Ink}" FontWeight="SemiBold" Content="故障发生时间"/>
+                            <DockPanel Margin="0,9,0,0" HorizontalAlignment="Left">
+                                <TextBox x:Name="TimelineAt" Style="{StaticResource Field}" Width="235" MaxLength="16" AutomationProperties.Name="故障发生时间"/>
+                                <Button x:Name="TimelineButton" Content="查询日志" Style="{StaticResource PrimaryButton}" Margin="11,0,0,0"/>
+                            </DockPanel>
+                            <TextBlock Text="输入本机时间，如 2026-11-20 20:30。安诊会查找时间点前后各 10 分钟。" Foreground="{StaticResource Muted}"
+                                       FontSize="13" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                            <TextBlock x:Name="TimelineInputError" Foreground="#FFC2B9" Visibility="Collapsed" Margin="0,7,0,0"
+                                       FontSize="13" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel x:Name="TimelineResults" Margin="0,18,0,0" Visibility="Collapsed"/>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</Window>
