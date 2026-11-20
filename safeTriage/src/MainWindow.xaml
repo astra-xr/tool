@@ -291,8 +291,11 @@
             <DockPanel>
                 <Button x:Name="StopCapture" DockPanel.Dock="Right" Content="结束记录" Style="{StaticResource SecondaryButton}"
                         Padding="11,5" Margin="9,0,0,0" Visibility="Collapsed"/>
+                <Button x:Name="MarkCapture" DockPanel.Dock="Right" Content="此刻出故障" Style="{StaticResource SecondaryButton}"
+                        Padding="11,5" Margin="9,0,0,0" Visibility="Collapsed"/>
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock x:Name="OperationStatus" Foreground="{StaticResource Accent}" FontSize="13" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="CaptureMarkStatus" Foreground="{StaticResource Muted}" FontSize="12" Visibility="Collapsed"/>
                     <ProgressBar Style="{StaticResource ScanProgress}" Visibility="Visible" Width="108" HorizontalAlignment="Left" Margin="0,5,0,1"/>
                 </StackPanel>
             </DockPanel>
@@ -519,6 +522,17 @@
                             </StackPanel>
                         </Border>
                     </UniformGrid>
+                    <Border Style="{StaticResource Tile}" Margin="0,10,0,0">
+                        <DockPanel>
+                            <Button x:Name="StorageButton" DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}"
+                                    Content="检测存储" Padding="14,7" Margin="14,0,0,0" VerticalAlignment="Center"/>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="磁盘和存储" FontSize="17" FontWeight="SemiBold"/>
+                                <TextBlock Text="检查本地卷空间、物理磁盘健康及近期存储错误。" Foreground="{StaticResource Muted}"
+                                           FontSize="13" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
                     <StackPanel x:Name="SpecialResults" Margin="0,18,0,0" Visibility="Collapsed"/>
                 </StackPanel>
                 <StackPanel x:Name="TimelinePage" Visibility="Collapsed">

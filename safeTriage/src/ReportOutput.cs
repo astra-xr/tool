@@ -74,7 +74,33 @@ namespace SafeTriage
 
         public static void Save(string filename, string report)
         {
-            File.WriteAllText(filename, report, new UTF8Encoding(true));
+            string target = Path.GetFullPath(filename);
+            string temporary = Path.Combine(Path.GetDirectoryName(target), ".safetriage-" + Guid.NewGuid().ToString("N") + ".tmp");
+            bool created = false;
+            try
+            {
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    created = true;
+                    using (var writer = new StreamWriter(stream, new UTF8Encoding(true), 4096, true))
+                        writer.Write(report);
+                    stream.Flush(true);
+                }
+                if (File.Exists(target))
+                    File.Replace(temporary, target, null);
+                else
+                    File.Move(temporary, target);
+                created = false;
+            }
+            finally
+            {
+                if (created)
+                {
+                    try { File.Delete(temporary); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
         }
 
         private static string Describe(Finding item, bool previous)

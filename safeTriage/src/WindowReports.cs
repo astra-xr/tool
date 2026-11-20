@@ -57,6 +57,8 @@ namespace SafeTriage
                     expanded = i < 3;
                 else if (category == "卡顿现场" || category == "声音排查" || category == "启动排查")
                     expanded = true;
+                else if (report.Findings[i].Name.StartsWith("故障标记", StringComparison.Ordinal))
+                    expanded = true;
                 output.Children.Add(BuildFinding(report.Findings[i], expanded));
             }
             if (report.Findings.Length > 0)
@@ -163,7 +165,8 @@ namespace SafeTriage
                 }
                 catch (Exception error)
                 {
-                    if (!(error is IOException) && !(error is UnauthorizedAccessException))
+                    if (!(error is IOException) && !(error is UnauthorizedAccessException) &&
+                        !(error is ArgumentException) && !(error is NotSupportedException) && !(error is System.Security.SecurityException))
                         throw;
                     MessageBox.Show(dialog, "暂时无法保存到这个位置。请换一个可写的文件夹。", "安诊", MessageBoxButton.OK, MessageBoxImage.Information);
                 }

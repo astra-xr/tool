@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 
@@ -156,6 +157,8 @@ namespace SafeTriage
             public int? Status;
             public string Failure;
             public bool Restricted;
+            public bool Incomplete;
+            public bool Unavailable { get { return Restricted || Incomplete; } }
             public bool Reached { get { return Status.HasValue && Status.Value != 407; } }
             public bool UsableAsReference { get { return Status >= 200 && Status < 400; } }
 
@@ -169,7 +172,7 @@ namespace SafeTriage
                 if (Status == 407)
                     return new Finding(name, CheckState.Warning, "返回 HTTP 407，代理要求身份验证。",
                         "检查当前网络或代理账号的配置。", "proxySettings", "返回 HTTP 407，代理要求身份验证。");
-                if (Restricted)
+                if (Unavailable)
                     return new Finding(name, CheckState.Unavailable, Failure, shareDetail: Failure);
                 if (!Reached)
                     return new Finding(name, CheckState.Warning, Failure, shareDetail: Failure);
@@ -180,7 +183,7 @@ namespace SafeTriage
             }
         }
 
-        private static HttpsResult ReadHttps(Uri target, bool useWindowsProxy)
+        private static HttpsResult ReadHttps(Uri target, bool useWindowsProxy, CancellationToken stop)
         {
             try
             {
@@ -190,6 +193,7 @@ namespace SafeTriage
                 request.AllowAutoRedirect = false;
                 request.Timeout = 3700;
                 request.ReadWriteTimeout = 3700;
+                using (stop.Register(request.Abort))
                 using (var response = (HttpWebResponse)request.GetResponse())
                     return new HttpsResult { Status = (int)response.StatusCode };
             }
@@ -205,6 +209,8 @@ namespace SafeTriage
                 var socket = error.GetBaseException() as SocketException;
                 if (socket != null && socket.SocketErrorCode == SocketError.AccessDenied)
                     return new HttpsResult { Restricted = true, Failure = "当前运行环境限制了网络连接。" };
+                if (error.Status == WebExceptionStatus.RequestCanceled)
+                    return new HttpsResult { Incomplete = true, Failure = "HTTPS 探测已停止。" };
 
                 string reason;
                 switch (error.Status)
@@ -250,9 +256,17 @@ namespace SafeTriage
             return Diagnostics.Probe(read, 4500, message => new Finding(name, CheckState.Unavailable, message));
         }
 
-        internal static Task<HttpsResult> TestHttps(Uri target, bool useWindowsProxy)
+        internal static async Task<HttpsResult> TestHttps(Uri target, bool useWindowsProxy,
+            CancellationToken stop = default(CancellationToken))
         {
-            return Diagnostics.Probe(() => ReadHttps(target, useWindowsProxy), 5200, message => new HttpsResult { Failure = message });
+            using (var requestStop = CancellationTokenSource.CreateLinkedTokenSource(stop))
+            {
+                CancellationToken requestToken = requestStop.Token;
+                HttpsResult result = await Diagnostics.Probe(() => ReadHttps(target, useWindowsProxy, requestToken), 5200,
+                    message => new HttpsResult { Incomplete = true, Failure = message }, stop).ConfigureAwait(false);
+                if (result.Incomplete) requestStop.Cancel();
+                return result;
+            }
         }
 
         public static async Task<Report> RunAsync(Uri target)
@@ -271,7 +285,8 @@ namespace SafeTriage
                 direct.Result.ToFinding("目标 HTTPS · 应用不使用代理") };
             if (customTarget)
             {
-                findings.Add(new Finding("对照站点", reference.Result.UsableAsReference ? CheckState.Clear : CheckState.Info,
+                findings.Add(new Finding("对照站点", reference.Result.Unavailable ? CheckState.Unavailable :
+                    reference.Result.UsableAsReference ? CheckState.Clear : CheckState.Info,
                     ReferenceSite.IdnHost + "（使用系统代理设置） · " + reference.Result.Describe()));
             }
 
@@ -284,6 +299,11 @@ namespace SafeTriage
         {
             if (system.Status == 407)
                 return "系统代理要求身份验证。先检查代理账号或当前网络的访问要求。";
+            if (direct.Unavailable || system.Unavailable)
+            {
+                string working = direct.Reached ? "不使用代理的请求已收到响应。" : system.Reached ? "使用系统代理设置的请求已收到响应。" : "";
+                return working + "有 HTTPS 探测未完成。可查看各路径的检测记录，再用同一目标复查。";
+            }
             if (direct.Reached && !system.Reached)
                 return proxy == CheckState.Warning ? "不使用代理时收到响应，本机代理端口连接失败。优先检查代理客户端和端口。" :
                     "不使用代理时收到响应，使用系统代理设置时失败。优先核对代理或自动配置脚本。";
@@ -302,8 +322,6 @@ namespace SafeTriage
                 return "本机 DNS 查询未成功，HTTPS 也未收到响应。先核对域名和网络连接，再查看当前 DNS 设置。";
             if (proxy == CheckState.Warning)
                 return "本机代理端口连接失败，两种 HTTPS 测试都没收到响应。先检查代理客户端，再核对当前网络。";
-            if (direct.Restricted || system.Restricted)
-                return "当前运行环境限制了安诊的网络连接。可以用浏览器打开同一地址，核对是否只有安诊受限。";
             return "HTTPS 测试未收到响应。对照下方的连接、TLS 或超时信息，并检查同一网络下其他设备是否正常。";
         }
     }

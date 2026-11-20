@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^[A-Za-z0-9_-]+\.exe$')]
-    [string]$OutputName = 'safeTriage-glass.exe'
+    [string]$OutputName = 'safeTriage-Windows-x64.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +29,7 @@ $arguments = @(
     '/reference:System.Xaml.dll'
     '/reference:System.Xml.Linq.dll'
     '/reference:System.ServiceProcess.dll'
+    '/reference:System.Management.dll'
 )
 foreach ($assembly in 'PresentationCore.dll', 'PresentationFramework.dll', 'WindowsBase.dll') {
     $arguments += '/reference:' + (Join-Path $wpf $assembly)

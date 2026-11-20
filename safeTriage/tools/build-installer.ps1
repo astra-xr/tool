@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
 if (-not $AppPath) {
-    $AppPath = Join-Path $project 'safeTriage-glass.exe'
+    $AppPath = Join-Path $project 'safeTriage-Windows-x64.exe'
 }
 $payload = (Resolve-Path -LiteralPath $AppPath).Path
 $app = Get-Item -LiteralPath $payload

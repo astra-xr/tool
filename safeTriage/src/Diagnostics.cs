@@ -66,8 +66,11 @@ namespace SafeTriage
 
     internal static class Diagnostics
     {
-        internal static async Task<T> Probe<T>(Func<T> read, int milliseconds, Func<string, T> unavailable)
+        internal static async Task<T> Probe<T>(Func<T> read, int milliseconds, Func<string, T> unavailable,
+            CancellationToken token = default(CancellationToken))
         {
+            if (token.IsCancellationRequested)
+                return unavailable("检测已停止。");
             Task<T> work = Task.Run(delegate
             {
                 try { return read(); }
@@ -75,9 +78,13 @@ namespace SafeTriage
                 catch (EventLogException) { return unavailable("Windows 事件日志无法读取。"); }
                 catch (Exception) { return unavailable("本次读取未完成，请稍后重试。"); }
             });
-            if (await Task.WhenAny(work, Task.Delay(milliseconds)).ConfigureAwait(false) != work)
-                return unavailable("检测超时，可以稍后复查。");
-            return await work.ConfigureAwait(false);
+            using (var timer = CancellationTokenSource.CreateLinkedTokenSource(token))
+            {
+                if (await Task.WhenAny(work, Task.Delay(milliseconds, timer.Token)).ConfigureAwait(false) != work)
+                    return unavailable(token.IsCancellationRequested ? "检测已停止。" : "检测超时，可以稍后复查。");
+                timer.Cancel();
+                return await work.ConfigureAwait(false);
+            }
         }
 
         private static Task<Finding> Local(string name, Func<Finding> read, int timeout = 4000)
@@ -126,14 +133,18 @@ namespace SafeTriage
             long free = drive.AvailableFreeSpace;
             long size = drive.TotalSize;
             const double gib = 1024.0 * 1024 * 1024;
-            string detail = string.Format("{0} 可用 {1:0.0} GB，共 {2:0.0} GB。", drive.Name, free / gib, size / gib);
-            if (free < 2 * gib)
+            CheckState state = StorageDiagnostics.FreeSpaceState(free, size);
+            if (state == CheckState.Unavailable)
+                return new Finding("系统盘空间", state, "Windows 返回的容量数据不完整。");
+            string shared = string.Format("可用 {0:0.0} GB，共 {1:0.0} GB。", free / gib, size / gib);
+            string detail = drive.Name + " " + shared;
+            if (state == CheckState.Error)
                 return new Finding("系统盘空间", CheckState.Error, detail,
-                    "先在 Windows 存储设置查看大项，移走确认可以移动的大文件。", "storage", detail);
-            if (free < 10 * gib || (free < 30 * gib && size > 0 && free / (double)size < .05))
+                    "先在 Windows 存储设置查看大项，移走确认可以移动的大文件。", "storage", shared);
+            if (state == CheckState.Warning)
                 return new Finding("系统盘空间", CheckState.Warning, detail,
-                    "可用空间偏少。打开存储设置，查看临时文件和占用较大的应用。", "storage", detail);
-            return new Finding("系统盘空间", CheckState.Clear, detail, shareDetail: detail);
+                    "可用空间偏少。打开存储设置，查看临时文件和占用较大的应用。", "storage", shared);
+            return new Finding("系统盘空间", CheckState.Clear, detail, shareDetail: shared);
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]

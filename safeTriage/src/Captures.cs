@@ -10,6 +10,39 @@ using System.Threading.Tasks;
 
 namespace SafeTriage
 {
+    internal sealed class CaptureMarks
+    {
+        private readonly List<double> offsets = new List<double>();
+        private bool completed;
+        public readonly Stopwatch Clock = Stopwatch.StartNew();
+
+        public bool TryAdd(out double offset)
+        {
+            lock (offsets)
+            {
+                offset = Clock.Elapsed.TotalSeconds;
+                if (completed || (offsets.Count > 0 && offset - offsets[offsets.Count - 1] < 0.4))
+                    return false;
+                offsets.Add(offset);
+                return true;
+            }
+        }
+
+        public double[] Complete()
+        {
+            lock (offsets)
+            {
+                completed = true;
+                return offsets.ToArray();
+            }
+        }
+
+        public static string At(double offset)
+        {
+            return "第 " + offset.ToString("0.0") + " 秒";
+        }
+    }
+
     internal static class CaptureTiming
     {
         public static async Task PauseUntil(Stopwatch clock, double next, CancellationToken token)
@@ -71,6 +104,14 @@ namespace SafeTriage
             public double WriteBytes;
         }
 
+        private sealed class Interval
+        {
+            public double From, To;
+            public string CpuName;
+            public double CpuSeconds;
+            public double? DiskRate;
+        }
+
         private static Dictionary<int, Sample> ReadProcesses(CancellationToken token)
         {
             var samples = new Dictionary<int, Sample>();
@@ -115,19 +156,20 @@ namespace SafeTriage
             return samples;
         }
 
-        public static Task<Report> RunAsync(int seconds, IProgress<string> progress, CancellationToken token)
+        public static Task<Report> RunAsync(int seconds, IProgress<string> progress, CancellationToken token, CaptureMarks marks)
         {
             return Task.Run(async delegate
             {
-                var clock = Stopwatch.StartNew();
+                var clock = marks.Clock;
                 var processTotals = new Dictionary<Tuple<int, long>, Totals>();
                 var disk = new List<double>();
-                int intervals = 0;
+                var intervals = new List<Interval>();
                 double measured = 0;
                 using (var meter = new DiskMeter())
                 {
                     meter.Read();
                     var before = ReadProcesses(token);
+                    double beforeAt = clock.Elapsed.TotalSeconds;
                     for (int step = 1; !token.IsCancellationRequested && measured < seconds; step++)
                     {
                         await CaptureTiming.PauseUntil(clock, step, token).ConfigureAwait(false);
@@ -137,22 +179,24 @@ namespace SafeTriage
                         var current = ReadProcesses(token);
                         if (token.IsCancellationRequested)
                             break;
-                        Accumulate(before, current, processTotals);
+                        var interval = new Interval { From = beforeAt, To = clock.Elapsed.TotalSeconds, DiskRate = meter.Read() };
+                        Accumulate(before, current, processTotals, interval);
                         before = current;
-                        double? physical = meter.Read();
-                        if (physical.HasValue)
-                            disk.Add(physical.Value);
-                        intervals++;
-                        measured = clock.Elapsed.TotalSeconds;
+                        beforeAt = interval.To;
+                        if (interval.DiskRate.HasValue)
+                            disk.Add(interval.DiskRate.Value);
+                        intervals.Add(interval);
+                        measured = interval.To;
                         if (progress != null)
                             progress.Report(CaptureTiming.Progress(clock, seconds));
                     }
                 }
-                return Describe(measured, intervals, processTotals.Values.ToArray(), disk, token.IsCancellationRequested);
+                return Describe(measured, intervals, processTotals.Values.ToArray(), disk, token.IsCancellationRequested, marks.Complete());
             });
         }
 
-        private static void Accumulate(Dictionary<int, Sample> before, Dictionary<int, Sample> current, Dictionary<Tuple<int, long>, Totals> totals)
+        private static void Accumulate(Dictionary<int, Sample> before, Dictionary<int, Sample> current,
+            Dictionary<Tuple<int, long>, Totals> totals, Interval interval)
         {
             foreach (Sample sample in current.Values)
             {
@@ -168,7 +212,13 @@ namespace SafeTriage
                 Sample previous;
                 if (!before.TryGetValue(sample.Id, out previous) || previous.Created != sample.Created)
                     continue;
-                entry.ProcessorSeconds += Math.Max(sample.ProcessorTicks - previous.ProcessorTicks, 0) / (double)TimeSpan.TicksPerSecond;
+                double cpu = Math.Max(sample.ProcessorTicks - previous.ProcessorTicks, 0) / (double)TimeSpan.TicksPerSecond;
+                entry.ProcessorSeconds += cpu;
+                if (cpu > interval.CpuSeconds)
+                {
+                    interval.CpuSeconds = cpu;
+                    interval.CpuName = sample.Name;
+                }
                 if (sample.ReadBytes.HasValue && previous.ReadBytes.HasValue &&
                     sample.ReadBytes.Value >= previous.ReadBytes.Value && sample.WriteBytes.Value >= previous.WriteBytes.Value)
                 {
@@ -179,11 +229,14 @@ namespace SafeTriage
             }
         }
 
-        private static Report Describe(double duration, int samples, Totals[] processes, List<double> disk, bool stopped)
+        private static Report Describe(double duration, List<Interval> intervals, Totals[] processes, List<double> disk, bool stopped, double[] marks)
         {
             string summary = string.Format("{0}，共记录 {1:0.0} 秒、{2} 轮，覆盖 {3} 个可读取的进程实例。",
-                stopped ? "已停止记录" : "记录完成", duration, samples, processes.Length);
+                stopped ? "已停止记录" : "记录完成", duration, intervals.Count, processes.Length);
             var findings = new List<Finding>();
+            if (marks.Length > 0)
+                findings.Add(new Finding("故障标记附近的负载", CheckState.Info, DescribeMarks(intervals, marks, true),
+                    "读数来自覆盖标记的采样区间，可结合卡顿时的操作进一步核对。", shareDetail: DescribeMarks(intervals, marks, false)));
             if (processes.Length > 0 && duration > 0)
             {
                 AddRanking(findings, "进程 CPU 平均占用", processes.Where(p => p.ProcessorSeconds > 0).OrderByDescending(p => p.ProcessorSeconds),
@@ -214,6 +267,28 @@ namespace SafeTriage
                 findings.Add(new Finding("物理磁盘读写速率", CheckState.Unavailable, "当前没有可用的 Windows 物理磁盘计数器样本。"));
             }
             return new Report(summary, findings.ToArray(), summary);
+        }
+
+        private static string DescribeMarks(List<Interval> intervals, double[] marks, bool includeNames)
+        {
+            return string.Join("\n", marks.Select(offset =>
+            {
+                Interval item = intervals.FirstOrDefault(sample => sample.From <= offset && sample.To >= offset);
+                string marker = CaptureMarks.At(offset);
+                if (item == null)
+                    return marker + " · 当时没有完整的采样区间。";
+                var parts = new List<string> { marker };
+                if (item.CpuName != null && item.To > item.From)
+                {
+                    double percent = Math.Min(100, 100 * item.CpuSeconds / (Environment.ProcessorCount * (item.To - item.From)));
+                    parts.Add((includeNames ? item.CpuName : "CPU 占用最高进程") + " CPU " + percent.ToString("0.0") + "%");
+                }
+                if (item.DiskRate.HasValue)
+                    parts.Add("物理磁盘 " + Size(item.DiskRate.Value) + " MB/s");
+                if (parts.Count == 1)
+                    parts.Add("这一轮没有可用的 CPU 或磁盘读数。");
+                return string.Join(" · ", parts);
+            }));
         }
 
         private static void AddRanking(List<Finding> findings, string title, IEnumerable<Totals> sorted,
@@ -287,42 +362,60 @@ namespace SafeTriage
 
     internal static class NetworkCapture
     {
-        private sealed class Round
+        internal sealed class Round
         {
             public DateTimeOffset Time;
+            public double Offset;
             public Finding Gateway;
             public Finding Dns;
             public Finding Https;
         }
 
-        public static Task<Report> RunAsync(Uri target, int seconds, IProgress<string> progress, CancellationToken token)
+        public static Task<Report> RunAsync(Uri target, int seconds, IProgress<string> progress, CancellationToken token, CaptureMarks marks)
         {
-            return RecordAsync(seconds, () => Sample(target), progress, token);
+            return RecordAsync(seconds, stop => Sample(target, stop), progress, token, marks);
         }
 
-        private static async Task<Report> RecordAsync(int seconds, Func<Task<Round>> sample, IProgress<string> progress, CancellationToken token)
+        internal static async Task<Report> RecordAsync(int seconds, Func<CancellationToken, Task<Round>> sample,
+            IProgress<string> progress, CancellationToken token, CaptureMarks marks)
         {
-            var clock = Stopwatch.StartNew();
+            var clock = marks.Clock;
             var rounds = new List<Round>();
             const int interval = 5;
-            for (int tick = 0; tick < seconds && !token.IsCancellationRequested; tick += interval)
+            using (var limit = CancellationTokenSource.CreateLinkedTokenSource(token))
             {
-                rounds.Add(await sample().ConfigureAwait(false));
-                if (progress != null)
-                    progress.Report(CaptureTiming.Progress(clock, seconds));
-                await CaptureTiming.PauseUntil(clock, tick + interval, token).ConfigureAwait(false);
+                limit.CancelAfter(TimeSpan.FromSeconds(Math.Max(0, seconds - clock.Elapsed.TotalSeconds)));
+                double next = 0;
+                while (next < seconds && !limit.IsCancellationRequested)
+                {
+                    await CaptureTiming.PauseUntil(clock, next, limit.Token).ConfigureAwait(false);
+                    if (limit.IsCancellationRequested || clock.Elapsed.TotalSeconds >= seconds)
+                        break;
+
+                    double offset = clock.Elapsed.TotalSeconds;
+                    DateTimeOffset time = DateTimeOffset.Now;
+                    Round round = await sample(limit.Token).ConfigureAwait(false);
+                    if (limit.IsCancellationRequested)
+                        break;
+                    round.Offset = offset;
+                    round.Time = time;
+                    rounds.Add(round);
+                    if (progress != null)
+                        progress.Report(CaptureTiming.Progress(clock, seconds));
+                    next = Math.Max(next + interval, Math.Ceiling(clock.Elapsed.TotalSeconds / interval) * interval);
+                }
+                await CaptureTiming.PauseUntil(clock, seconds, limit.Token).ConfigureAwait(false);
             }
-            return Describe(rounds, clock.Elapsed.TotalSeconds, token.IsCancellationRequested);
+            return Describe(rounds, Math.Min(seconds, clock.Elapsed.TotalSeconds), token.IsCancellationRequested, marks.Complete());
         }
 
-        private static async Task<Round> Sample(Uri target)
+        private static async Task<Round> Sample(Uri target, CancellationToken token)
         {
-            DateTimeOffset start = DateTimeOffset.Now;
-            Task<Finding> gateway = Diagnostics.Probe(ReadGateway, 2300, error => NotAvailable("网关", error));
-            Task<Finding> dns = Diagnostics.Probe(() => NetworkDiagnostics.CheckDns(target), 4500, error => NotAvailable("本机 DNS", error));
-            Task<NetworkDiagnostics.HttpsResult> https = NetworkDiagnostics.TestHttps(target, true);
+            Task<Finding> gateway = Diagnostics.Probe(ReadGateway, 2300, error => NotAvailable("网关", error), token);
+            Task<Finding> dns = Diagnostics.Probe(() => NetworkDiagnostics.CheckDns(target), 4500, error => NotAvailable("本机 DNS", error), token);
+            Task<NetworkDiagnostics.HttpsResult> https = NetworkDiagnostics.TestHttps(target, true, token);
             await Task.WhenAll(gateway, dns, https).ConfigureAwait(false);
-            return new Round { Time = start, Gateway = gateway.Result, Dns = dns.Result, Https = https.Result.ToFinding("HTTPS") };
+            return new Round { Gateway = gateway.Result, Dns = dns.Result, Https = https.Result.ToFinding("HTTPS") };
         }
 
         private static Finding NotAvailable(string title, string error)
@@ -365,19 +458,34 @@ namespace SafeTriage
             return new Finding("网关", CheckState.Warning, "网关没有回应 ICMP。设备可能禁用了 Ping。", shareDetail: "网关无 ICMP 响应。");
         }
 
-        private static Report Describe(List<Round> rounds, double elapsed, bool stopped)
+        private static Report Describe(List<Round> rounds, double elapsed, bool stopped, double[] marks)
         {
             string summary = string.Format("{0}，约 {1:0} 秒、{2} 轮。每轮并行检查网关、DNS 和 HTTPS。",
                 stopped ? "已停止记录" : "记录完成", elapsed, rounds.Count);
+            var entries = new List<Finding>();
+            if (marks.Length > 0)
+            {
+                string detail = string.Join("\n", marks.Select(offset =>
+                {
+                    Round prior = rounds.LastOrDefault(round => round.Offset <= offset);
+                    Round later = rounds.FirstOrDefault(round => round.Offset > offset);
+                    return CaptureMarks.At(offset) + " · 标记故障\n  前一轮 " + NearRound(prior) + "\n  后一轮 " + NearRound(later);
+                }));
+                entries.Add(new Finding("故障标记前后的连通性", CheckState.Info, detail,
+                    "每轮探测需要时间。报告以探测开始时间与标记对照。", shareDetail: detail));
+            }
             if (rounds.Count == 0)
-                return new Report(summary, new[] { NotAvailable("断网记录", "结束前未取得完整采样。") }, summary);
+            {
+                entries.Add(NotAvailable("断网记录", "结束前未取得完整采样。"));
+                return new Report(summary, entries.ToArray(), summary);
+            }
             Round first = rounds.FirstOrDefault(round => IsError(round.Dns) || IsError(round.Https));
             if (first != null)
             {
                 string at = IsError(first.Dns) ? (IsError(first.Https) ? "DNS 和 HTTPS" : "DNS") : "HTTPS";
                 summary += string.Format(" 首次记录到异常为 {0:HH:mm:ss}，涉及 {1}。", first.Time, at);
             }
-            var entries = new List<Finding>
+            entries.AddRange(new[]
             {
                 Summarize("网关 ICMP", rounds.Select(round => round.Gateway),
                     "网关可能禁用 ICMP。若只有网关未回应，结合 DNS 和 HTTPS 结果判断。", "networkSettings"),
@@ -385,11 +493,17 @@ namespace SafeTriage
                     "如果网关连通而 DNS 反复失败，可核对当前 DNS 设置或换一个域名对照。", "networkSettings"),
                 Summarize("HTTPS（系统代理设置）", rounds.Select(round => round.Https),
                     "如果 DNS 和网关正常而 HTTPS 波动，继续用网络排查对比两条代理路径。", "network")
-            };
+            });
             string history = string.Join("\n", rounds.Select(round => string.Format("{0:HH:mm:ss}  网关 {1} · DNS {2} · HTTPS {3}",
                 round.Time, Stage(round.Gateway), Stage(round.Dns), Stage(round.Https))));
             entries.Add(new Finding("逐轮记录", CheckState.Info, history, shareDetail: history));
             return new Report(summary, entries.ToArray(), summary);
+        }
+
+        private static string NearRound(Round round)
+        {
+            return round == null ? "没有完整采样" : string.Format("{0} · 网关 {1} · DNS {2} · HTTPS {3}",
+                CaptureMarks.At(round.Offset), Stage(round.Gateway), Stage(round.Dns), Stage(round.Https));
         }
 
         private static string Stage(Finding finding)

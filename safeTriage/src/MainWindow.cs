@@ -21,9 +21,10 @@ namespace SafeTriage
         private readonly Window window;
         private bool busy;
         private CancellationTokenSource captureStop;
+        private CaptureMarks captureMarks;
         private static readonly string[] Pages = { "Home", "Network", "Special", "Timeline" };
         private static readonly string[] CheckButtons = { "QuickButton", "NetworkButton", "NetworkRecordButton",
-            "PerformanceButton", "AudioButton", "UsbButton", "StartupButton", "TimelineButton" };
+            "PerformanceButton", "AudioButton", "UsbButton", "StartupButton", "StorageButton", "TimelineButton" };
 
         static MainWindow()
         {
@@ -51,17 +52,27 @@ namespace SafeTriage
             Find<Button>("NetworkButton").Click += async (sender, args) => await RunNetwork(false);
             Find<Button>("NetworkRecordButton").Click += async (sender, args) => await RunNetwork(true);
             Find<Button>("PerformanceButton").Click += async (sender, args) => await RunCapture("SpecialResults", "卡顿现场", "30 秒",
-                (token, progress) => PerformanceCapture.RunAsync(30, progress, token));
+                (token, progress, marks) => PerformanceCapture.RunAsync(30, progress, token, marks));
             Find<Button>("AudioButton").Click += async (sender, args) => await RunCheck("SpecialResults", "声音排查", "", DeviceDiagnostics.AudioAsync);
             Find<Button>("UsbButton").Click += async (sender, args) => await RunCheck("SpecialResults", "USB 排查", "", DeviceDiagnostics.UsbAsync);
             Find<Button>("StartupButton").Click += async (sender, args) => await RunCheck("SpecialResults", "启动排查", "", StartupDiagnostics.RunAsync);
+            Find<Button>("StorageButton").Click += async (sender, args) => await RunCheck("SpecialResults", "存储排查", "", StorageDiagnostics.RunAsync);
             Find<Button>("TimelineButton").Click += async (sender, args) => await RunTimeline();
             Find<Button>("StopCapture").Click += (sender, args) =>
             {
                 if (captureStop != null)
                     captureStop.Cancel();
                 Find<Button>("StopCapture").IsEnabled = false;
+                Find<Button>("MarkCapture").IsEnabled = false;
                 Find<TextBlock>("OperationStatus").Text = "正在保留已完成的采样…";
+            };
+            Find<Button>("MarkCapture").Click += (sender, args) =>
+            {
+                double offset;
+                if (captureMarks == null || captureStop.IsCancellationRequested || !captureMarks.TryAdd(out offset)) return;
+                var status = Find<TextBlock>("CaptureMarkStatus");
+                status.Text = "已标记 " + CaptureMarks.At(offset);
+                status.Visibility = Visibility.Visible;
             };
             window.Closed += (sender, args) => { if (captureStop != null) captureStop.Cancel(); };
             var target = Find<TextBox>("NetworkTarget");
@@ -166,6 +177,9 @@ namespace SafeTriage
             Find<Border>("OperationBanner").Visibility = running ? Visibility.Visible : Visibility.Collapsed;
             Find<Button>("StopCapture").Visibility = capture ? Visibility.Visible : Visibility.Collapsed;
             Find<Button>("StopCapture").IsEnabled = capture;
+            Find<Button>("MarkCapture").Visibility = capture ? Visibility.Visible : Visibility.Collapsed;
+            Find<Button>("MarkCapture").IsEnabled = capture;
+            Find<TextBlock>("CaptureMarkStatus").Visibility = Visibility.Collapsed;
             Find<TextBlock>("OperationStatus").Text = running ? name + " · 正在读取…" : "";
         }
 
@@ -199,7 +213,7 @@ namespace SafeTriage
             error.Visibility = Visibility.Collapsed;
             if (record)
                 return RunCapture("NetworkResults", "间歇断网记录", target.AbsoluteUri,
-                    (token, progress) => NetworkCapture.RunAsync(target, 60, progress, token), target.Authority,
+                    (token, progress, marks) => NetworkCapture.RunAsync(target, 60, progress, token, marks), target.Authority,
                     () => Find<StackPanel>("NetworkPreview").Visibility = Visibility.Collapsed);
             return RunCheck("NetworkResults", "网络排查", target.AbsoluteUri, () => NetworkDiagnostics.RunAsync(target), target.Authority,
                 completed: () =>
@@ -229,14 +243,19 @@ namespace SafeTriage
                 time.ToString("MM-dd HH:mm"));
         }
 
-        private Task RunCapture(string output, string name, string scope, Func<CancellationToken, IProgress<string>, Task<Report>> operation,
+        private Task RunCapture(string output, string name, string scope, Func<CancellationToken, IProgress<string>, CaptureMarks, Task<Report>> operation,
             string subtitle = null, Action completed = null)
         {
-            return RunCheck(output, name, scope, () => operation(captureStop.Token, new Progress<string>(message =>
+            return RunCheck(output, name, scope, () =>
             {
-                if (captureStop != null && !captureStop.IsCancellationRequested)
-                    Find<TextBlock>("OperationStatus").Text = name + " · " + message;
-            })), subtitle, capture: true, completed: completed);
+                var source = captureStop;
+                var progress = new Progress<string>(message =>
+                {
+                    if (ReferenceEquals(captureStop, source) && !source.IsCancellationRequested)
+                        Find<TextBlock>("OperationStatus").Text = name + " · " + message;
+                });
+                return operation(source.Token, progress, captureMarks);
+            }, subtitle, capture: true, completed: completed);
         }
 
         private async Task RunCheck(string output, string name, string scope, Func<Task<Report>> operation,
@@ -245,7 +264,10 @@ namespace SafeTriage
             if (busy)
                 return;
             if (capture)
+            {
                 captureStop = new CancellationTokenSource();
+                captureMarks = new CaptureMarks();
+            }
             SetBusy(true, capture, name);
             StackPanel results = Find<StackPanel>(output);
             try
@@ -265,6 +287,7 @@ namespace SafeTriage
                 {
                     captureStop.Dispose();
                     captureStop = null;
+                    captureMarks = null;
                 }
                 SetBusy(false, false, name);
             }
@@ -336,6 +359,7 @@ namespace SafeTriage
                 case "networkSettings": return "打开网络设置";
                 case "proxySettings": return "打开代理设置";
                 case "storage": return "打开存储设置";
+                case "systemLog": return "打开事件查看器";
                 case "taskmgr": return "打开任务管理器";
                 case "reliability": return "查看可靠性历史";
                 case "updates": return "打开更新历史记录";
@@ -358,6 +382,7 @@ namespace SafeTriage
                     case "networkSettings": Open("ms-settings:network-status"); break;
                     case "proxySettings": Open("ms-settings:network-proxy"); break;
                     case "storage": Open("ms-settings:storagesense"); break;
+                    case "systemLog": Open(System.IO.Path.Combine(Environment.SystemDirectory, "eventvwr.msc")); break;
                     case "taskmgr": Open(System.IO.Path.Combine(Environment.SystemDirectory, "Taskmgr.exe")); break;
                     case "reliability": Open(System.IO.Path.Combine(Environment.SystemDirectory, "perfmon.exe"), "/rel"); break;
                     case "updates": Open("ms-settings:windowsupdate-history"); break;
