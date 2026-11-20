@@ -121,7 +121,7 @@ namespace SafeTriage
             }
             return new Border
             {
-                CornerRadius = new CornerRadius(8), Background = Brush("#56101D26"),
+                CornerRadius = new CornerRadius(8), Background = ThemeBrush("SoftSurface"),
                 Padding = new Thickness(9, 7, 9, 7), Child = body
             };
         }
@@ -132,8 +132,9 @@ namespace SafeTriage
             {
                 Title = "脱敏报告预览", Width = 645, Height = 560, MinWidth = 420, MinHeight = 350,
                 Owner = window, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Background = Brush("#14232E"), Foreground = ThemeBrush("Ink"), FontFamily = window.FontFamily
+                Background = window.Background, Foreground = ThemeBrush("Ink"), FontFamily = window.FontFamily
             };
+            dialog.SourceInitialized += SetTitleBar;
             var root = new DockPanel { Margin = new Thickness(20) };
             var note = Text("此预览已省略域名、IP 地址、文件路径及进程和设备名称。请核对内容后保存。",
                 13, ThemeBrush("Muted"), FontWeights.Normal);
@@ -174,7 +175,7 @@ namespace SafeTriage
             var preview = new TextBox
             {
                 IsReadOnly = true, Text = report, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Background = Brush("#111E28"), Foreground = ThemeBrush("Ink"), BorderBrush = Brush("#40616A"), Padding = new Thickness(10),
+                Background = ThemeBrush("Surface"), Foreground = ThemeBrush("Ink"), BorderBrush = ThemeBrush("FieldEdge"), Padding = new Thickness(10),
                 FontSize = 13
             };
             root.Children.Add(preview);

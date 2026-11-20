@@ -40,7 +40,12 @@ namespace SafeTriage
                 window = (Window)XamlReader.Load(layout);
             using (var icon = assembly.GetManifestResourceStream("SafeTriage.Icon.ico"))
                 window.Icon = BitmapFrame.Create(icon, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
-            window.SourceInitialized += (sender, args) => SetTitleBar();
+            window.SourceInitialized += SetTitleBar;
+            var hero = Find<Border>("QuickHero");
+            var heroGlow = Find<Border>("QuickHeroGlow");
+            MouseEventHandler moveHeroLight = (sender, args) => PositionPointerLight(heroGlow, args.GetPosition(heroGlow));
+            hero.MouseEnter += moveHeroLight;
+            hero.AddHandler(UIElement.MouseMoveEvent, moveHeroLight, true);
 
             foreach (string page in Pages)
             {
@@ -114,17 +119,17 @@ namespace SafeTriage
 
             var glow = button.Template.FindName("PointerGlow", button) as Border;
             if (glow != null)
-                PositionButtonLight(glow, args.GetPosition(glow));
+                PositionPointerLight(glow, args.GetPosition(glow));
         }
 
-        private static void PositionButtonLight(Border glow, Point position)
+        private static void PositionPointerLight(Border glow, Point position)
         {
             var fill = glow.Background as RadialGradientBrush;
             var rim = glow.BorderBrush as RadialGradientBrush;
             if (fill == null || rim == null)
                 return;
 
-            // Keep the shared template brushes separate from the light on each button.
+            // Keep the shared brushes separate from the light on each control.
             if (glow.ReadLocalValue(Border.BackgroundProperty) == DependencyProperty.UnsetValue)
             {
                 glow.Background = fill = fill.Clone();
@@ -138,17 +143,19 @@ namespace SafeTriage
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr windowHandle, int attribute, ref int value, int size);
 
-        private void SetTitleBar()
+        private static void SetTitleBar(object sender, EventArgs args)
         {
             if (SystemParameters.HighContrast)
                 return;
 
-            IntPtr handle = new WindowInteropHelper(window).Handle;
+            var target = (Window)sender;
+            IntPtr handle = new WindowInteropHelper(target).Handle;
             const int useImmersiveDarkMode = 20;
             const int captionColor = 35;
-            int enabled = 1;
-            int background = 0x1D130B; // DWM COLORREF is ordered BGR.
-            DwmSetWindowAttribute(handle, useImmersiveDarkMode, ref enabled, sizeof(int));
+            int darkMode = 0;
+            Color color = ((SolidColorBrush)target.Background).Color;
+            int background = color.R | (color.G << 8) | (color.B << 16); // DWM COLORREF is ordered BGR.
+            DwmSetWindowAttribute(handle, useImmersiveDarkMode, ref darkMode, sizeof(int));
             DwmSetWindowAttribute(handle, captionColor, ref background, sizeof(int));
         }
 
@@ -298,11 +305,11 @@ namespace SafeTriage
             string label, foreground, background;
             switch (finding.State)
             {
-                case CheckState.Clear: label = "已检查"; foreground = "#B2E9D8"; background = "#244743"; break;
-                case CheckState.Info: label = "供参考"; foreground = "#C0DDF4"; background = "#2A4258"; break;
-                case CheckState.Warning: label = "建议检查"; foreground = "#FFDC9B"; background = "#513D2A"; break;
-                case CheckState.Error: label = "发现异常"; foreground = "#FFC5BE"; background = "#5A3238"; break;
-                default: label = "未完成"; foreground = "#CEDBE5"; background = "#394653"; break;
+                case CheckState.Clear: label = "已检查"; foreground = "#24604A"; background = "#EAF4ED"; break;
+                case CheckState.Info: label = "供参考"; foreground = "#355A78"; background = "#EDF3F8"; break;
+                case CheckState.Warning: label = "建议检查"; foreground = "#785017"; background = "#FFF2DA"; break;
+                case CheckState.Error: label = "发现异常"; foreground = "#BA152E"; background = "#FFE8EB"; break;
+                default: label = "未完成"; foreground = "#61575B"; background = "#F1EDEF"; break;
             }
 
             var header = new DockPanel { LastChildFill = true };
