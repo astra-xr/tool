@@ -1,4 +1,4 @@
-name: Release safeTriage preview
+name: Release safeTriage
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   release:
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 12
     defaults:
       run:
         shell: pwsh
@@ -26,30 +26,124 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Build the Windows x64 executable
+
+      - name: Build and select the release payload
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $app = 'safeTriage-Windows-x64.exe'
-          ./build.ps1 -OutputName $app
-          $file = Get-Item -LiteralPath $app
-          $version = [version]$file.VersionInfo.FileVersion
+          $portable = 'safeTriage-Windows-x64.exe'
+          $setup = 'safeTriage-Setup-Windows-x64.exe'
+          ./build.ps1 -OutputName $portable
+          $version = [version](Get-Item -LiteralPath $portable).VersionInfo.FileVersion
           $tag = "safetriage-v$($version.ToString(3))"
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $app).Hash.ToLowerInvariant()
-          "$hash  $app" | Set-Content -LiteralPath "$app.sha256" -Encoding ascii
+          $stage = New-Item -ItemType Directory -Path 'release' -Force
+
+          $releases = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list releases.' }
+          $exists = $tag -in ($releases | ConvertFrom-Json).tagName
+          if ($exists) {
+              $metadata = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets
+              if ($LASTEXITCODE -ne 0) { throw 'Could not read the current release.' }
+              $names = ($metadata | ConvertFrom-Json).assets.name
+              $download = @('release', 'download', $tag, '--repo', $env:GITHUB_REPOSITORY, '--dir', $stage.FullName,
+                  '--pattern', $portable, '--pattern', "$portable.sha256")
+              if ($setup -in $names) { $download += @('--pattern', $setup) }
+              if ("$setup.sha256" -in $names) { $download += @('--pattern', "$setup.sha256") }
+              gh @download
+              if ($LASTEXITCODE -ne 0) { throw 'Could not download the existing release assets.' }
+          } else {
+              Copy-Item -LiteralPath $portable -Destination $stage.FullName
+              $hash = (Get-FileHash -LiteralPath "release/$portable" -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $portable" | Set-Content -LiteralPath "release/$portable.sha256" -Encoding ascii
+          }
+
+          $payload = Get-Item -LiteralPath "release/$portable"
+          $expected = ((Get-Content -Raw -LiteralPath "release/$portable.sha256").Trim() -split '\s+')[0]
+          if ($expected -notmatch '^[0-9a-f]{64}$' -or (Get-FileHash -LiteralPath $payload.FullName).Hash -ne $expected) {
+              throw 'The portable executable failed checksum verification.'
+          }
+          if ([version]$payload.VersionInfo.FileVersion -ne $version) {
+              throw 'The existing portable executable does not match the source version.'
+          }
           "SAFETRIAGE_TAG=$tag" >> $env:GITHUB_ENV
           "SAFETRIAGE_VERSION=$($version.ToString(3))" >> $env:GITHUB_ENV
-      - name: Publish the preview and checksum
+          "SAFETRIAGE_EXISTING=$exists" >> $env:GITHUB_ENV
+
+      - name: Build the Windows x64 setup
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = 'safeTriage-Setup-Windows-x64.exe'
+          $installer = "release/$setup"
+          if (-not (Test-Path -LiteralPath $installer)) {
+              if (Test-Path -LiteralPath "$installer.sha256") { throw 'Existing setup checksum has no matching installer.' }
+              ./tools/build-installer.ps1 -AppPath 'release/safeTriage-Windows-x64.exe'
+          }
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if (Test-Path -LiteralPath "$installer.sha256") {
+              $expected = ((Get-Content -Raw -LiteralPath "$installer.sha256").Trim() -split '\s+')[0]
+              if ($hash -ne $expected) { throw 'The setup does not match its checksum.' }
+          } else {
+              [IO.File]::WriteAllText((Join-Path $PWD "$installer.sha256"), "$hash  $setup" + [char]10, [Text.Encoding]::ASCII)
+          }
+
+      - name: Verify install, shortcuts and uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:RUNNER_TEMP 'safeTriage Installer Test'
+          $setup = (Resolve-Path -LiteralPath 'release/safeTriage-Setup-Windows-x64.exe').Path
+          $app = Join-Path $target 'safeTriage.exe'
+          $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{BA7045A7-25DC-40AF-9E57-30318D6A2038}_is1'
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'safeTriage\安诊 safeTriage.lnk'
+          $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) '安诊 safeTriage.lnk'
+          $options = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
+
+          function Invoke-Installer([string]$file, [string[]]$arguments) {
+              $process = Start-Process -FilePath $file -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+              if ($process.ExitCode -ne 0) { throw "$file exited with $($process.ExitCode)." }
+          }
+
+          Invoke-Installer $setup ($options + @('/LANG=zhcn', '/TASKS=desktopicon', ('/DIR="{0}"' -f $target)))
+          $expected = (Get-FileHash -LiteralPath 'release/safeTriage-Windows-x64.exe').Hash
+          if ((Get-FileHash -LiteralPath $app).Hash -ne $expected) { throw 'Installed executable differs from the published portable build.' }
+          $entry = Get-ItemProperty -LiteralPath $uninstallKey
+          if ($entry.DisplayName -notlike '安诊 safeTriage*' -or $entry.DisplayVersion -ne $env:SAFETRIAGE_VERSION) {
+              throw 'Missing or incorrect Installed Apps entry.'
+          }
+          $shell = New-Object -ComObject WScript.Shell
+          foreach ($path in @($shortcut, $desktop)) {
+              if (-not (Test-Path -LiteralPath $path) -or $shell.CreateShortcut($path).TargetPath -ne $app) {
+                  throw "Missing or incorrect shortcut: $path"
+              }
+          }
+
+          Invoke-Installer ($entry.UninstallString.Trim('"')) $options
+          foreach ($path in @($app, $shortcut, $desktop, $uninstallKey)) {
+              if (Test-Path -LiteralPath $path) { throw "Uninstall left $path" }
+          }
+          Write-Output 'Install, both shortcuts, Installed Apps entry and uninstall verified.'
+
+      - name: Publish the installed and portable packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = $env:SAFETRIAGE_TAG
-          $existing = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'Could not read the current releases.' }
-          if ($tag -in $existing.tagName) {
-              Write-Host "Release $tag is already published."
-              exit 0
+          $title = "安诊 safeTriage $env:SAFETRIAGE_VERSION"
+          $setup = 'safeTriage-Setup-Windows-x64.exe'
+          if ($env:SAFETRIAGE_EXISTING -eq 'True') {
+              $metadata = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets
+              if ($LASTEXITCODE -ne 0) { throw 'Could not look up existing release assets.' }
+              $names = ($metadata | ConvertFrom-Json).assets.name
+              foreach ($asset in @($setup, "$setup.sha256")) {
+                  if ($asset -notin $names) {
+                      gh release upload $tag "release/$asset" --repo $env:GITHUB_REPOSITORY
+                      if ($LASTEXITCODE -ne 0) { throw "Could not upload $asset." }
+                  }
+              }
+              gh release edit $tag --repo $env:GITHUB_REPOSITORY --title $title --notes-file RELEASE.md --prerelease=false --draft=false --latest=false
+          } else {
+              $portable = 'safeTriage-Windows-x64.exe'
+              gh release create $tag "release/$setup" "release/$setup.sha256" "release/$portable" "release/$portable.sha256" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title $title --notes-file RELEASE.md --latest=false
           }
-          $app = 'safeTriage-Windows-x64.exe'
-          gh release create $tag $app "$app.sha256" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "安诊 safeTriage $env:SAFETRIAGE_VERSION" --notes-file RELEASE.md --prerelease --latest=false
-          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the preview.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the release.' }

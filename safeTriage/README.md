@@ -8,7 +8,9 @@ Windows 故障排查助手。检查电脑和网络异常，查看检测依据与
 
 ## 下载
 
-在 [安诊 0.2.0 Release](https://github.com/charm-xr/tool/releases/tag/safetriage-v0.2.0) 下载 [Windows x64 便携版](https://github.com/charm-xr/tool/releases/download/safetriage-v0.2.0/safeTriage-Windows-x64.exe)，双击即可使用。Release 提供 SHA-256 校验文件。
+[Windows x64 安装版](https://github.com/charm-xr/tool/releases/download/safetriage-v0.2.0/safeTriage-Setup-Windows-x64.exe)带中文安装向导，可选择安装目录和桌面快捷方式。安装后可从开始菜单打开，或通过 Windows「已安装的应用」卸载。
+
+[Windows x64 便携版](https://github.com/charm-xr/tool/releases/download/safetriage-v0.2.0/safeTriage-Windows-x64.exe)可直接运行。两种下载的 SHA-256 校验文件见 [安诊 0.2.0 Release](https://github.com/charm-xr/tool/releases/tag/safetriage-v0.2.0)。
 
 ## 功能
 
@@ -35,3 +37,11 @@ Windows 故障排查助手。检查电脑和网络异常，查看检测依据与
 ```
 
 构建依赖 Windows 的 .NET Framework 4.8 x64 编译器和 WPF 组件。项目源码位于 [src/](src/)。
+
+使用 Inno Setup 6.7 或更高版本生成安装包：
+
+```powershell
+.\tools\build-installer.ps1 -AppPath .\safeTriage-Windows-x64.exe
+```
+
+安装包和 SHA-256 文件输出到 `release/`。
