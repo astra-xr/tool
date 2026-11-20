@@ -113,13 +113,46 @@ jobs:
           if ($entry.DisplayName -notlike '安诊 safeTriage*' -or $entry.DisplayVersion -ne $env:SAFETRIAGE_VERSION) {
               throw 'Missing or incorrect Installed Apps entry.'
           }
-          $shell = New-Object -ComObject WScript.Shell
+          # Use the Unicode Shell link interface for the Chinese shortcut filename.
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Runtime.InteropServices.ComTypes;
+          using System.Text;
+          
+          public static class SetupShortcut
+          {
+              [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+              private interface IShellLinkW
+              {
+                  [PreserveSig]
+                  int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int size, IntPtr fileData, uint flags);
+              }
+          
+              public static string ReadTarget(string path)
+              {
+                  var type = Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046"));
+                  object link = Activator.CreateInstance(type);
+                  try
+                  {
+                      ((IPersistFile)link).Load(path, 0);
+                      var target = new StringBuilder(260);
+                      Marshal.ThrowExceptionForHR(((IShellLinkW)link).GetPath(target, target.Capacity, IntPtr.Zero, 0));
+                      return target.ToString();
+                  }
+                  finally
+                  {
+                      Marshal.ReleaseComObject(link);
+                  }
+              }
+          }
+          '@
           foreach ($path in @($shortcut, $desktop)) {
               if (-not (Test-Path -LiteralPath $path)) {
                   Get-Content -LiteralPath $log -Tail 40
                   throw "Shortcut was not found: $path"
               }
-              $actualTarget = $shell.CreateShortcut($path).TargetPath
+              $actualTarget = [SetupShortcut]::ReadTarget($path)
               if ($actualTarget -ne $app) {
                   Get-Content -LiteralPath $log -Tail 40
                   throw "Shortcut $path points to '$actualTarget', expected '$app'."
