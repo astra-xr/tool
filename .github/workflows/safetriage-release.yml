@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - safeTriage/RELEASE.md
+      - safeTriage/tools/**
+      - .github/workflows/safetriage-release.yml
   workflow_dispatch:
 
 permissions:
@@ -94,7 +96,7 @@ jobs:
           $setup = (Resolve-Path -LiteralPath 'release/safeTriage-Setup-Windows-x64.exe').Path
           $app = Join-Path $target 'safeTriage.exe'
           $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{BA7045A7-25DC-40AF-9E57-30318D6A2038}_is1'
-          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'safeTriage\安诊 safeTriage.lnk'
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) '安诊 safeTriage.lnk'
           $desktop = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) '安诊 safeTriage.lnk'
           $options = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
 
@@ -103,7 +105,8 @@ jobs:
               if ($process.ExitCode -ne 0) { throw "$file exited with $($process.ExitCode)." }
           }
 
-          Invoke-Installer $setup ($options + @('/LANG=zhcn', '/TASKS=desktopicon', ('/DIR="{0}"' -f $target)))
+          $log = Join-Path $env:RUNNER_TEMP 'safetriage-setup.log'
+          Invoke-Installer $setup ($options + @('/LANG=zhcn', '/TASKS=desktopicon', ('/DIR="{0}"' -f $target), ('/LOG="{0}"' -f $log)))
           $expected = (Get-FileHash -LiteralPath 'release/safeTriage-Windows-x64.exe').Hash
           if ((Get-FileHash -LiteralPath $app).Hash -ne $expected) { throw 'Installed executable differs from the published portable build.' }
           $entry = Get-ItemProperty -LiteralPath $uninstallKey
@@ -112,8 +115,14 @@ jobs:
           }
           $shell = New-Object -ComObject WScript.Shell
           foreach ($path in @($shortcut, $desktop)) {
-              if (-not (Test-Path -LiteralPath $path) -or $shell.CreateShortcut($path).TargetPath -ne $app) {
-                  throw "Missing or incorrect shortcut: $path"
+              if (-not (Test-Path -LiteralPath $path)) {
+                  Get-Content -LiteralPath $log -Tail 40
+                  throw "Shortcut was not found: $path"
+              }
+              $actualTarget = $shell.CreateShortcut($path).TargetPath
+              if ($actualTarget -ne $app) {
+                  Get-Content -LiteralPath $log -Tail 40
+                  throw "Shortcut $path points to '$actualTarget', expected '$app'."
               }
           }
 

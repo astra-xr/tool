@@ -11,7 +11,6 @@ AppPublisherURL=https://github.com/charm-xr/tool/tree/main/safeTriage
 AppSupportURL=https://github.com/charm-xr/tool/issues
 AppUpdatesURL=https://github.com/charm-xr/tool/releases
 DefaultDirName={localappdata}\Programs\safeTriage
-DefaultGroupName=safeTriage
 DisableDirPage=no
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
@@ -45,7 +44,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#PayloadExe}"; DestDir: "{app}"; DestName: "safeTriage.exe"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\safeTriage.exe"; WorkingDir: "{app}"
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\safeTriage.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\safeTriage.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
