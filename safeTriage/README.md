@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/safetriage.png" width="96" alt="safeTriage 图标"></p>
 
-# 安诊 safeTriage 0.4.0
+# 安诊 safeTriage 0.5.0
 
 Windows 故障排查助手。检查电脑和网络异常，查看检测依据与处理建议，复查后对比前后变化。
 
@@ -8,9 +8,9 @@ Windows 故障排查助手。检查电脑和网络异常，查看检测依据与
 
 ## 下载
 
-[Windows x64 安装版](https://github.com/charm-xr/tool/releases/download/safetriage-v0.4.0/safeTriage-Setup-Windows-x64.exe)带中文安装向导，可选择安装目录和桌面快捷方式。安装后可从开始菜单打开，或通过 Windows「已安装的应用」卸载。
+[Windows x64 安装版](https://github.com/charm-xr/tool/releases/download/safetriage-v0.5.0/safeTriage-Setup-Windows-x64.exe)带中文安装向导，可选择安装目录和桌面快捷方式。安装后可从开始菜单打开，或通过 Windows「已安装的应用」卸载。
 
-[Windows x64 便携版](https://github.com/charm-xr/tool/releases/download/safetriage-v0.4.0/safeTriage-Windows-x64.exe)可直接运行。两种下载的 SHA-256 校验文件见 [安诊 0.4.0 Release](https://github.com/charm-xr/tool/releases/tag/safetriage-v0.4.0)。
+[Windows x64 便携版](https://github.com/charm-xr/tool/releases/download/safetriage-v0.5.0/safeTriage-Windows-x64.exe)可直接运行。两种下载的 SHA-256 校验文件见 [安诊 0.5.0 Release](https://github.com/charm-xr/tool/releases/tag/safetriage-v0.5.0)。
 
 ## 功能
 
@@ -20,7 +20,7 @@ Windows 故障排查助手。检查电脑和网络异常，查看检测依据与
 | 网络排查 | 对比系统代理设置和应用不使用代理的连接路径。间歇断网记录持续约 60 秒，逐轮检查网关、DNS 和 HTTPS，可提前结束并标记故障时刻。 |
 | 专项排查 | 检查默认声音输出、音频服务、USB 识别与问题代码、近期启动计时。存储排查提供各本地卷余量、物理磁盘健康读数和近七天的存储事件。卡顿记录持续 30 秒，可标记故障并查看相关负载。 |
 | 故障时间线 | 按本机时间查找前后各 10 分钟的应用闪退、蓝屏、异常重启、显示驱动、硬件和更新记录。 |
-| 复查与报告 | 同一会话内对比同一项目的两次结果，可预览并保存脱敏文本报告。 |
+| 复查与报告 | 同一会话内按检测目标保留上次结果，可复查对比并预览、保存脱敏文本报告。 |
 
 ## 检测边界
 

@@ -16,7 +16,7 @@ namespace SafeTriage
     internal sealed class Finding
     {
         public Finding(string name, CheckState state, string detail, string advice = null,
-            string action = null, string shareDetail = null, string shareName = null)
+            string action = null, string shareDetail = null, string shareName = null, string comparisonKey = null)
         {
             Name = name;
             State = state;
@@ -25,6 +25,7 @@ namespace SafeTriage
             Action = action;
             ShareDetail = shareDetail;
             ShareName = shareName ?? name;
+            ComparisonKey = comparisonKey ?? name;
         }
 
         public string Name { get; private set; }
@@ -34,6 +35,7 @@ namespace SafeTriage
         public string Action { get; private set; }
         public string ShareDetail { get; private set; }
         public string ShareName { get; private set; }
+        public string ComparisonKey { get; private set; }
 
         public static string Status(CheckState state)
         {

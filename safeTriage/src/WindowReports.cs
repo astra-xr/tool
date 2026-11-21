@@ -10,18 +10,14 @@ namespace SafeTriage
 {
     internal sealed partial class MainWindow
     {
-        private sealed class Snapshot
-        {
-            public string Scope;
-            public Report Report;
-        }
+        private readonly Dictionary<Tuple<string, string>, Report> snapshots = new Dictionary<Tuple<string, string>, Report>();
 
-        private readonly Dictionary<string, Snapshot> snapshots = new Dictionary<string, Snapshot>();
-
-        private void ShowResults(StackPanel output, string category, string scope, string subtitle, Report report)
+        private void ShowResults(StackPanel output, string category, string scope, string subtitle, Report report, bool recordSnapshot = true)
         {
-            Snapshot saved;
-            Report previous = report.Findings.Length > 0 && snapshots.TryGetValue(category, out saved) && saved.Scope == scope ? saved.Report : null;
+            var key = Tuple.Create(category, scope);
+            Report previous = null;
+            if (recordSnapshot)
+                snapshots.TryGetValue(key, out previous);
             FindingChange[] changes = previous != null ? ReportOutput.Compare(previous, report) : new FindingChange[0];
 
             output.Children.Clear();
@@ -61,8 +57,8 @@ namespace SafeTriage
                     expanded = true;
                 output.Children.Add(BuildFinding(report.Findings[i], expanded));
             }
-            if (report.Findings.Length > 0)
-                snapshots[category] = new Snapshot { Scope = scope, Report = report };
+            if (recordSnapshot)
+                snapshots[key] = report;
 
             if (output.IsVisible)
                 header.BringIntoView();

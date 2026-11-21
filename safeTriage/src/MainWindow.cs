@@ -211,18 +211,19 @@ namespace SafeTriage
             var error = Find<TextBlock>("NetworkInputError");
             if (!NetworkDiagnostics.TryTarget(input.Text, out target))
             {
-                error.Text = "请输入一个域名或 HTTPS 地址，例如 www.microsoft.com。";
+                error.Text = "请输入一个域名或 HTTPS 地址，例如 www.microsoft.com。若指定端口，请使用 1 至 65535。";
                 error.Visibility = Visibility.Visible;
                 input.Focus();
                 return Task.FromResult(0);
             }
 
             error.Visibility = Visibility.Collapsed;
+            string scope = target.DnsSafeHost + ":" + target.Port.ToString(CultureInfo.InvariantCulture);
             if (record)
-                return RunCapture("NetworkResults", "间歇断网记录", target.AbsoluteUri,
+                return RunCapture("NetworkResults", "间歇断网记录", scope,
                     (token, progress, marks) => NetworkCapture.RunAsync(target, 60, progress, token, marks), target.Authority,
                     () => Find<StackPanel>("NetworkPreview").Visibility = Visibility.Collapsed);
-            return RunCheck("NetworkResults", "网络排查", target.AbsoluteUri, () => NetworkDiagnostics.RunAsync(target), target.Authority,
+            return RunCheck("NetworkResults", "网络排查", scope, () => NetworkDiagnostics.RunAsync(target), target.Authority,
                 completed: () =>
                 {
                     Find<StackPanel>("NetworkPreview").Visibility = Visibility.Collapsed;
@@ -286,7 +287,8 @@ namespace SafeTriage
             }
             catch (Exception)
             {
-                ShowResults(results, name, scope, subtitle, new Report("本轮检测中断，可以重新检测。", new Finding[0]));
+                ShowResults(results, name, scope, subtitle, new Report("本轮检测中断，可以重新检测。", new Finding[0]),
+                    recordSnapshot: false);
             }
             finally
             {

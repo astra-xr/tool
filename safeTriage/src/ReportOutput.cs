@@ -20,12 +20,13 @@ namespace SafeTriage
     {
         public static FindingChange[] Compare(Report previous, Report current)
         {
-            var past = previous.Findings.GroupBy(item => item.Name).ToDictionary(group => group.Key, group => new Queue<Finding>(group));
+            var past = previous.Findings.GroupBy(item => item.ComparisonKey)
+                .ToDictionary(group => group.Key, group => new Queue<Finding>(group));
             var changes = new List<FindingChange>();
             foreach (Finding item in current.Findings)
             {
                 Queue<Finding> matches;
-                Finding before = past.TryGetValue(item.Name, out matches) && matches.Count > 0 ? matches.Dequeue() : null;
+                Finding before = past.TryGetValue(item.ComparisonKey, out matches) && matches.Count > 0 ? matches.Dequeue() : null;
                 if (before == null || before.State != item.State || before.Detail != item.Detail)
                     changes.Add(new FindingChange { Before = before, After = item });
             }

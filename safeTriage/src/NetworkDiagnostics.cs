@@ -24,7 +24,7 @@ namespace SafeTriage
 
             Uri parsed;
             if (text.Length > 500 || !Uri.TryCreate(text.Contains("://") ? text : "https://" + text, UriKind.Absolute, out parsed)
-                || parsed.Scheme != "https" || parsed.UserInfo.Length != 0 || parsed.HostNameType == UriHostNameType.Unknown)
+                || parsed.Scheme != "https" || parsed.Port <= 0 || parsed.UserInfo.Length != 0 || parsed.HostNameType == UriHostNameType.Unknown)
                 return false;
 
             target = new UriBuilder("https", parsed.IdnHost, parsed.IsDefaultPort ? -1 : parsed.Port, "/").Uri;
@@ -298,12 +298,17 @@ namespace SafeTriage
         private static string Summarize(CheckState link, CheckState proxy, CheckState dns, HttpsResult direct, HttpsResult system, bool referenceReached)
         {
             if (system.Status == 407)
-                return "系统代理要求身份验证。先检查代理账号或当前网络的访问要求。";
+            {
+                string directResponse = direct.Reached ? "应用不使用代理时返回 " + direct.Describe() + "。" : "";
+                return directResponse + "使用系统代理设置时返回 HTTP 407，代理要求身份验证。先检查代理账号或当前网络的访问要求。";
+            }
             if (direct.Unavailable || system.Unavailable)
             {
                 string working = direct.Reached ? "不使用代理的请求已收到响应。" : system.Reached ? "使用系统代理设置的请求已收到响应。" : "";
                 return working + "有 HTTPS 探测未完成。可查看各路径的检测记录，再用同一目标复查。";
             }
+            if (direct.Status.HasValue && system.Status.HasValue && direct.Status != system.Status)
+                return "应用不使用代理时返回 " + direct.Describe() + "，使用系统代理设置时返回 " + system.Describe() + "。";
             if (direct.Reached && !system.Reached)
                 return proxy == CheckState.Warning ? "不使用代理时收到响应，本机代理端口连接失败。优先检查代理客户端和端口。" :
                     "不使用代理时收到响应，使用系统代理设置时失败。优先核对代理或自动配置脚本。";
@@ -311,7 +316,7 @@ namespace SafeTriage
                 return dns == CheckState.Warning ? "系统路径收到响应，但本机 DNS 查询失败。若仅个别应用打不开，检查该应用的连接方式。" :
                     "系统路径收到响应，但安诊不使用代理的请求失败。若仅个别应用打不开，先检查该应用的代理设置。";
             if (system.Reached)
-                return system.Status >= 400 ? "目标地址返回了 HTTP 错误。用浏览器打开原始地址，看看显示的是登录、访问受限还是站点故障。" :
+                return system.Status >= 400 ? "两条路径均返回 " + system.Describe() + "。用浏览器打开原始地址，核对访问限制或站点状态。" :
                     "两种方式均收到目标地址的 HTTPS 响应。如果只有某个浏览器或应用打不开，优先检查其代理和扩展设置。";
             if (referenceReached)
                 return dns == CheckState.Warning ? "对照站点能响应，目标域名的本机 DNS 查询失败。先核对域名，再用另一台设备访问同一站点。" :

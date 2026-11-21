@@ -11,6 +11,8 @@ namespace SafeTriage
 {
     internal sealed class WindowsEvent
     {
+        public string Log;
+        public long? RecordId;
         public string Provider;
         public int Id;
         public DateTime? Time;
@@ -70,7 +72,11 @@ namespace SafeTriage
                                     values[name] = value.Value;
                             }
                         }
-                        found.Add(new WindowsEvent { Provider = record.ProviderName, Id = record.Id, Time = record.TimeCreated, Data = values });
+                        found.Add(new WindowsEvent
+                        {
+                            Log = log, RecordId = record.RecordId, Provider = record.ProviderName,
+                            Id = record.Id, Time = record.TimeCreated, Data = values
+                        });
                     }
                 }
             }
@@ -205,7 +211,11 @@ namespace SafeTriage
             string evidence = time + " · " + item.Provider + " / " + item.Id;
             string share = safeExtra.Length > 0 ? evidence + " · " + safeExtra : evidence;
             string header = (item.Time.HasValue ? item.Time.Value.ToLocalTime().ToString("MM-dd HH:mm:ss") : "时间未知") + " · " + title;
-            return new Finding(header, state, detail.Length > 0 ? share + " · " + detail : share, advice, action, share, title);
+            long? timestamp = item.Time.HasValue ? (long?)item.Time.Value.ToUniversalTime().Ticks : null;
+            string comparisonKey = string.Format(CultureInfo.InvariantCulture, "{0}|{1}|{2}|{3}|{4}",
+                item.Log, item.RecordId, timestamp, item.Provider, item.Id);
+            return new Finding(header, state, detail.Length > 0 ? share + " · " + detail : share, advice, action, share, title,
+                comparisonKey: comparisonKey);
         }
     }
 }
