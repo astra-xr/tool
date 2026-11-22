@@ -15,6 +15,7 @@ namespace SafeTriage
         private void ShowResults(StackPanel output, string category, string scope, string subtitle, Report report, bool recordSnapshot = true)
         {
             var key = Tuple.Create(category, scope);
+            recordSnapshot = recordSnapshot && report.CanCompare;
             Report previous = null;
             if (recordSnapshot)
                 snapshots.TryGetValue(key, out previous);
@@ -34,6 +35,18 @@ namespace SafeTriage
             export.Click += (sender, args) => PreviewExport(ReportOutput.Text(category, report, previous, changes));
             DockPanel.SetDock(export, Dock.Right);
             row.Children.Add(export);
+            if (recordSnapshot)
+            {
+                var saveHistory = new Button
+                {
+                    Style = (Style)window.Resources["SecondaryButton"], Content = "存入历史",
+                    Padding = new Thickness(11, 5, 11, 5), Margin = new Thickness(10, 0, 0, 0)
+                };
+                saveHistory.Click += (sender, args) => SaveHistory(category, subtitle, report,
+                    ReportOutput.Text(category, report, previous, changes), saveHistory);
+                DockPanel.SetDock(saveHistory, Dock.Right);
+                row.Children.Add(saveHistory);
+            }
             var headingText = Text(title, 18, ThemeBrush("Ink"), FontWeights.SemiBold);
             headingText.VerticalAlignment = VerticalAlignment.Center;
             row.Children.Add(headingText);
@@ -46,6 +59,8 @@ namespace SafeTriage
 
             if (previous != null)
                 output.Children.Add(BuildComparison(previous, report, changes));
+            if (report.Performance != null)
+                output.Children.Add(BuildPerformanceChart(report.Performance));
             for (int i = 0; i < report.Findings.Length; i++)
             {
                 bool? expanded = null;
@@ -67,8 +82,11 @@ namespace SafeTriage
         private Border BuildComparison(Report before, Report after, FindingChange[] changes)
         {
             int states = changes.Count(change => change.StateChanged);
+            int uncertain = changes.Count(change => change.Unconfirmed);
             string label = changes.Length == 0 ? "复查对比 · 未发现变化" :
-                string.Format("复查对比 · {0} 项变化（{1} 项状态变化）", changes.Length, states);
+                string.Format("复查对比 · {0} 项变化（{1} 项状态变化）", changes.Length - uncertain, states);
+            if (uncertain > 0)
+                label += " · " + uncertain + " 项未能核对";
             var header = Text(label, 14, ThemeBrush("Accent"), FontWeights.SemiBold);
             var contents = new StackPanel();
             var times = Text(string.Format("上次 {0:MM-dd HH:mm:ss} · 本次 {1:MM-dd HH:mm:ss}", before.CreatedAt, after.CreatedAt),
@@ -83,10 +101,10 @@ namespace SafeTriage
                 var columns = new Grid();
                 columns.ColumnDefinitions.Add(new ColumnDefinition());
                 columns.ColumnDefinitions.Add(new ColumnDefinition());
-                var previous = ComparisonSide("上次", change.Before);
+                var previous = ComparisonSide("上次", change.Before, change.Unconfirmed);
                 previous.Margin = new Thickness(0, 0, 5, 0);
                 columns.Children.Add(previous);
-                var current = ComparisonSide("本次", change.After);
+                var current = ComparisonSide("本次", change.After, change.Unconfirmed);
                 current.Margin = new Thickness(5, 0, 0, 0);
                 Grid.SetColumn(current, 1);
                 columns.Children.Add(current);
@@ -96,7 +114,7 @@ namespace SafeTriage
             var expander = new Expander
             {
                 Header = header, Content = contents, Style = (Style)window.Resources["FindingExpander"],
-                IsExpanded = states > 0
+                IsExpanded = states > 0 || uncertain > 0
             };
             var tile = Tile(expander);
             tile.Margin = new Thickness(0, 8, 0, 0);
@@ -104,10 +122,11 @@ namespace SafeTriage
             return tile;
         }
 
-        private Border ComparisonSide(string label, Finding finding)
+        private Border ComparisonSide(string label, Finding finding, bool unconfirmed)
         {
             var body = new StackPanel();
-            body.Children.Add(Text(label + " · " + (finding == null ? "未出现" : Finding.Status(finding.State)),
+            string status = finding != null ? Finding.Status(finding.State) : unconfirmed ? "未能核对（日志读取不完整）" : "未出现";
+            body.Children.Add(Text(label + " · " + status,
                 12, ThemeBrush("Accent"), FontWeights.SemiBold));
             if (finding != null)
             {

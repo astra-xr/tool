@@ -10,10 +10,11 @@ namespace SafeTriage
     {
         public Finding Before;
         public Finding After;
+        public bool Unconfirmed;
 
         public string Name { get { return (After ?? Before).Name; } }
         public string ShareName { get { return (After ?? Before).ShareName; } }
-        public bool StateChanged { get { return Before == null || After == null || Before.State != After.State; } }
+        public bool StateChanged { get { return !Unconfirmed && (Before == null || After == null || Before.State != After.State); } }
     }
 
     internal static class ReportOutput
@@ -28,12 +29,16 @@ namespace SafeTriage
                 Queue<Finding> matches;
                 Finding before = past.TryGetValue(item.ComparisonKey, out matches) && matches.Count > 0 ? matches.Dequeue() : null;
                 if (before == null || before.State != item.State || before.Detail != item.Detail)
-                    changes.Add(new FindingChange { Before = before, After = item });
+                    changes.Add(new FindingChange
+                    {
+                        Before = before, After = item,
+                        Unconfirmed = before == null && previous.IncompleteSources.Contains(item.Source)
+                    });
             }
             foreach (Queue<Finding> remaining in past.Values)
             {
                 foreach (Finding item in remaining)
-                    changes.Add(new FindingChange { Before = item });
+                    changes.Add(new FindingChange { Before = item, Unconfirmed = current.IncompleteSources.Contains(item.Source) });
             }
             return changes.OrderByDescending(change => change.StateChanged).ToArray();
         }
@@ -57,6 +62,18 @@ namespace SafeTriage
                     output.AppendLine(item.ShareDetail);
                 output.AppendLine();
             }
+            if (current.Performance != null)
+            {
+                output.AppendLine("卡顿采样 · 秒 | CPU % | 内存 % | 磁盘 MB/s");
+                foreach (PerformancePoint point in current.Performance.Points)
+                {
+                    output.AppendFormat("{0:0.0} | {1} | {2} | {3}", point.Offset, FormatReading(point.Cpu),
+                        FormatReading(point.Memory), FormatReading(point.Disk)).AppendLine();
+                }
+                if (current.Performance.Marks.Length > 0)
+                    output.AppendLine("故障标记 · " + string.Join("、", current.Performance.Marks.Select(CaptureMarks.At)));
+                output.AppendLine();
+            }
 
             if (previous != null)
             {
@@ -66,8 +83,8 @@ namespace SafeTriage
                 foreach (FindingChange change in changes)
                 {
                     output.AppendLine(change.ShareName);
-                    output.Append("上次 ").AppendLine(Describe(change.Before, true));
-                    output.Append("本次 ").AppendLine(Describe(change.After, false));
+                    output.Append("上次 ").AppendLine(Describe(change.Before, change.Unconfirmed));
+                    output.Append("本次 ").AppendLine(Describe(change.After, change.Unconfirmed));
                 }
             }
             return output.ToString();
@@ -104,10 +121,15 @@ namespace SafeTriage
             }
         }
 
-        private static string Describe(Finding item, bool previous)
+        private static string FormatReading(double? value)
+        {
+            return value.HasValue ? value.Value.ToString("0.0") : "未取得";
+        }
+
+        private static string Describe(Finding item, bool unconfirmed)
         {
             if (item == null)
-                return previous ? "未出现" : "本次未出现";
+                return unconfirmed ? "未能核对（日志读取不完整）" : "未出现";
             return Finding.Status(item.State) + (string.IsNullOrEmpty(item.ShareDetail) ? "" : " · " + item.ShareDetail);
         }
     }

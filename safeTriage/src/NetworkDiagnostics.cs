@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -158,13 +159,22 @@ namespace SafeTriage
             public string Failure;
             public bool Restricted;
             public bool Incomplete;
+            public int? RejectedHeadStatus;
+            public string GetFailure;
             public bool Unavailable { get { return Restricted || Incomplete; } }
             public bool Reached { get { return Status.HasValue && Status.Value != 407; } }
             public bool UsableAsReference { get { return Status >= 200 && Status < 400; } }
+            public bool HeadRejected { get { return !RejectedHeadStatus.HasValue && (Status == 405 || Status == 501); } }
 
             public string Describe()
             {
-                return Status.HasValue ? "HTTP " + Status.Value : Failure;
+                if (!Status.HasValue)
+                    return Failure;
+                string response = "HTTP " + Status.Value;
+                if (RejectedHeadStatus.HasValue)
+                    return response + "（GET 补测，HEAD 返回 HTTP " + RejectedHeadStatus.Value + "）";
+                return HeadRejected ? response + "（HEAD 不受支持" +
+                    (GetFailure == null ? "，未取得 GET 结果" : "，GET 补测：" + GetFailure.TrimEnd('。')) + "）" : response;
             }
 
             public Finding ToFinding(string name)
@@ -176,23 +186,52 @@ namespace SafeTriage
                     return new Finding(name, CheckState.Unavailable, Failure, shareDetail: Failure);
                 if (!Reached)
                     return new Finding(name, CheckState.Warning, Failure, shareDetail: Failure);
+                if (HeadRejected)
+                    return new Finding(name, CheckState.Info, Describe() + "。HTTPS 已收到响应，网页能否正常打开仍待确认。",
+                        "可在浏览器打开原始地址核对。", shareDetail: Describe());
                 if (Status >= 400)
-                    return new Finding(name, CheckState.Info, "收到 HTTP " + Status.Value + " 响应，网站或中间服务返回了错误。",
-                        "用浏览器打开原始地址，核对是否需要登录、是否受访问限制，或是否只有该网站异常。", shareDetail: "HTTP " + Status.Value);
-                return new Finding(name, CheckState.Clear, "收到 HTTP " + Status.Value + " 响应。", shareDetail: "HTTP " + Status.Value);
+                    return new Finding(name, CheckState.Info, "收到 " + Describe() + "，网站或中间服务返回了错误。",
+                        "用浏览器打开原始地址，核对是否需要登录、是否受访问限制，或是否只有该网站异常。", shareDetail: Describe());
+                return new Finding(name, CheckState.Clear, "收到 " + Describe() + " 响应。", shareDetail: Describe());
             }
         }
 
         private static HttpsResult ReadHttps(Uri target, bool useWindowsProxy, CancellationToken stop)
         {
+            return ProbeMethods((method, timeout) => ReadHttpsResponse(target, useWindowsProxy, method, timeout, stop), stop);
+        }
+
+        internal static HttpsResult ProbeMethods(Func<string, int, HttpsResult> request, CancellationToken stop)
+        {
+            const int budget = 3700;
+            var elapsed = Stopwatch.StartNew();
+            HttpsResult head = request("HEAD", budget);
+            int remaining = budget - (int)elapsed.ElapsedMilliseconds;
+            if (!head.HeadRejected || remaining <= 0 || stop.IsCancellationRequested)
+                return head;
+
+            HttpsResult get = request("GET", remaining);
+            if (get.Status.HasValue)
+            {
+                get.RejectedHeadStatus = head.Status;
+                return get;
+            }
+            head.GetFailure = get.Failure;
+            return head;
+        }
+
+        private static HttpsResult ReadHttpsResponse(Uri target, bool useWindowsProxy, string method, int timeout, CancellationToken stop)
+        {
             try
             {
                 var request = (HttpWebRequest)WebRequest.Create(target);
-                request.Method = "HEAD";
+                request.Method = method;
                 request.Proxy = useWindowsProxy ? WebRequest.GetSystemWebProxy() : null;
                 request.AllowAutoRedirect = false;
-                request.Timeout = 3700;
-                request.ReadWriteTimeout = 3700;
+                request.Timeout = timeout;
+                request.ReadWriteTimeout = timeout;
+                if (method == "GET")
+                    request.KeepAlive = false;
                 using (stop.Register(request.Abort))
                 using (var response = (HttpWebResponse)request.GetResponse())
                     return new HttpsResult { Status = (int)response.StatusCode };
@@ -309,6 +348,9 @@ namespace SafeTriage
             }
             if (direct.Status.HasValue && system.Status.HasValue && direct.Status != system.Status)
                 return "应用不使用代理时返回 " + direct.Describe() + "，使用系统代理设置时返回 " + system.Describe() + "。";
+            if (direct.HeadRejected || system.HeadRejected)
+                return "应用不使用代理：" + direct.Describe().TrimEnd('。') + "；系统代理设置：" +
+                    system.Describe().TrimEnd('。') + "。请用浏览器打开原始地址核对。";
             if (direct.Reached && !system.Reached)
                 return proxy == CheckState.Warning ? "不使用代理时收到响应，本机代理端口连接失败。优先检查代理客户端和端口。" :
                     "不使用代理时收到响应，使用系统代理设置时失败。优先核对代理或自动配置脚本。";

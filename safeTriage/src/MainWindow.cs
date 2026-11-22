@@ -22,7 +22,7 @@ namespace SafeTriage
         private bool busy;
         private CancellationTokenSource captureStop;
         private CaptureMarks captureMarks;
-        private static readonly string[] Pages = { "Home", "Network", "Special", "Timeline" };
+        private static readonly string[] Pages = { "Home", "Network", "Special", "Timeline", "History" };
         private static readonly string[] CheckButtons = { "QuickButton", "NetworkButton", "NetworkRecordButton",
             "PerformanceButton", "AudioButton", "UsbButton", "StartupButton", "StorageButton", "TimelineButton" };
 
@@ -53,6 +53,12 @@ namespace SafeTriage
                 Find<ToggleButton>(page + "Nav").Click += (sender, args) => ShowPage(selectedPage);
             }
             Find<Button>("NetworkShortcut").Click += (sender, args) => ShowPage("Network");
+            Find<TextBox>("HistoryFilter").TextChanged += (sender, args) => FilterHistory();
+            Find<ListBox>("HistoryList").SelectionChanged += (sender, args) =>
+            {
+                var entry = Find<ListBox>("HistoryList").SelectedItem as SavedReport;
+                Find<TextBox>("HistoryPreview").Text = entry == null ? "" : entry.Content;
+            };
             Find<Button>("QuickButton").Click += async (sender, args) => await RunQuick();
             Find<Button>("NetworkButton").Click += async (sender, args) => await RunNetwork(false);
             Find<Button>("NetworkRecordButton").Click += async (sender, args) => await RunNetwork(true);
@@ -172,6 +178,8 @@ namespace SafeTriage
                 Find<StackPanel>(page + "Page").Visibility = page == selected ? Visibility.Visible : Visibility.Collapsed;
             }
             Find<ScrollViewer>("ContentScroll").ScrollToTop();
+            if (selected == "History")
+                RefreshHistory();
         }
 
         private void SetBusy(bool running, bool capture, string name)

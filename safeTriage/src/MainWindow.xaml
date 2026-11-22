@@ -321,6 +321,7 @@
                         <ToggleButton x:Name="NetworkNav" Content="网络排查" Style="{StaticResource Navigation}" Margin="3,0,0,0"/>
                         <ToggleButton x:Name="SpecialNav" Content="专项排查" Style="{StaticResource Navigation}" Margin="3,0,0,0"/>
                         <ToggleButton x:Name="TimelineNav" Content="故障时间线" Style="{StaticResource Navigation}" Margin="3,0,0,0"/>
+                        <ToggleButton x:Name="HistoryNav" Content="诊断历史" Style="{StaticResource Navigation}" Margin="3,0,0,0"/>
                     </StackPanel>
                 </Border>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0">
@@ -486,7 +487,7 @@
                                         Padding="14,7" Margin="11,0,0,0" VerticalAlignment="Center"/>
                                 <StackPanel VerticalAlignment="Center">
                                     <TextBlock Text="间歇性断网" FontWeight="SemiBold"/>
-                                    <TextBlock Text="连续记录网关、DNS 和 HTTPS。遇到断网时保持页面打开，或提前结束记录。" TextWrapping="Wrap"
+                                    <TextBlock Text="并行记录网关、DNS 和两条 HTTPS 路径。断网时可标记故障，也可提前结束记录。" TextWrapping="Wrap"
                                                Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </DockPanel>
@@ -581,6 +582,44 @@
                         </StackPanel>
                     </Border>
                     <StackPanel x:Name="TimelineResults" Margin="0,18,0,0" Visibility="Collapsed"/>
+                </StackPanel>
+                <StackPanel x:Name="HistoryPage" Visibility="Collapsed">
+                    <Border Style="{StaticResource Tile}" Padding="26,22" CornerRadius="25" BorderBrush="{StaticResource AccentEdge}">
+                        <StackPanel>
+                            <TextBlock Text="诊断历史" FontSize="32" FontWeight="Bold"/>
+                            <TextBlock Text="只保存你主动存入历史的报告。站点和故障时间仅用于本机查找，正文为脱敏报告。"
+                                       Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,6,0,16"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*"/>
+                                    <ColumnDefinition Width="3*"/>
+                                </Grid.ColumnDefinitions>
+                                <DockPanel Margin="0,0,16,0">
+                                    <Label DockPanel.Dock="Top" Target="{Binding ElementName=HistoryFilter}"
+                                           Content="按故障类型或站点筛选" Padding="0" Foreground="{StaticResource Ink}"
+                                           FontWeight="SemiBold" Margin="0,0,0,7"/>
+                                    <TextBox x:Name="HistoryFilter" DockPanel.Dock="Top" Style="{StaticResource Field}" Margin="0,0,0,8"/>
+                                    <TextBlock x:Name="HistoryStatus" DockPanel.Dock="Top" Foreground="{StaticResource Muted}" Margin="0,0,0,9"/>
+                                    <ListBox x:Name="HistoryList" AutomationProperties.Name="已保存报告" Foreground="{StaticResource Ink}"
+                                             Background="{StaticResource Surface}" BorderBrush="{StaticResource AccentEdge}"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" Margin="4,5"/>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="报告内容" FontWeight="SemiBold" Margin="0,0,0,7"/>
+                                    <TextBox x:Name="HistoryPreview" Height="295" IsReadOnly="True" TextWrapping="Wrap"
+                                             AutomationProperties.Name="历史报告内容" VerticalScrollBarVisibility="Auto"
+                                             Foreground="{StaticResource Ink}" Background="{StaticResource Surface}"
+                                             BorderBrush="{StaticResource AccentEdge}" Padding="10"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Grid>
         </ScrollViewer>

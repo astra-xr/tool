@@ -151,7 +151,10 @@ namespace SafeTriage
                 summary = range + " 可读取的日志中没有匹配记录。部分日志未能读取，无法完整判断。";
             else
                 summary = range + " 没有匹配记录。可以换一个更接近故障的时间再查。";
-            return new Report(summary, findings.ToArray(), range + " · 已列出 " + items.Length + " 条记录。");
+            string[] incomplete = logs.Where(log => log.Failure != null || log.Events.Length > Limit)
+                .Select(log => log.Log).ToArray();
+            return new Report(summary, findings.ToArray(), range + " · 已列出 " + items.Length + " 条记录。",
+                incompleteSources: incomplete);
         }
 
         internal static Finding Describe(WindowsEvent item)
@@ -215,7 +218,7 @@ namespace SafeTriage
             string comparisonKey = string.Format(CultureInfo.InvariantCulture, "{0}|{1}|{2}|{3}|{4}",
                 item.Log, item.RecordId, timestamp, item.Provider, item.Id);
             return new Finding(header, state, detail.Length > 0 ? share + " · " + detail : share, advice, action, share, title,
-                comparisonKey: comparisonKey);
+                comparisonKey: comparisonKey, source: item.Log);
         }
     }
 }

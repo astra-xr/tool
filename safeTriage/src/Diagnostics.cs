@@ -16,7 +16,8 @@ namespace SafeTriage
     internal sealed class Finding
     {
         public Finding(string name, CheckState state, string detail, string advice = null,
-            string action = null, string shareDetail = null, string shareName = null, string comparisonKey = null)
+            string action = null, string shareDetail = null, string shareName = null, string comparisonKey = null,
+            string source = null)
         {
             Name = name;
             State = state;
@@ -26,6 +27,7 @@ namespace SafeTriage
             ShareDetail = shareDetail;
             ShareName = shareName ?? name;
             ComparisonKey = comparisonKey ?? name;
+            Source = source;
         }
 
         public string Name { get; private set; }
@@ -36,6 +38,7 @@ namespace SafeTriage
         public string ShareDetail { get; private set; }
         public string ShareName { get; private set; }
         public string ComparisonKey { get; private set; }
+        public string Source { get; private set; }
 
         public static string Status(CheckState state)
         {
@@ -52,18 +55,25 @@ namespace SafeTriage
 
     internal sealed class Report
     {
-        public Report(string summary, Finding[] findings, string shareSummary = null)
+        public Report(string summary, Finding[] findings, string shareSummary = null, bool canCompare = true,
+            string[] incompleteSources = null, PerformanceSeries performance = null)
         {
             Summary = summary;
             Findings = findings;
             CreatedAt = DateTimeOffset.Now;
             ShareSummary = shareSummary;
+            CanCompare = canCompare;
+            IncompleteSources = incompleteSources ?? new string[0];
+            Performance = performance;
         }
 
         public string Summary { get; private set; }
         public Finding[] Findings { get; private set; }
         public DateTimeOffset CreatedAt { get; private set; }
         public string ShareSummary { get; private set; }
+        public bool CanCompare { get; private set; }
+        public string[] IncompleteSources { get; private set; }
+        public PerformanceSeries Performance { get; private set; }
     }
 
     internal static class Diagnostics
@@ -171,25 +181,45 @@ namespace SafeTriage
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GlobalMemoryStatusEx(ref MemoryStatus memory);
 
+        internal struct CpuTimes
+        {
+            public ulong Idle, Kernel, User;
+        }
+
+        internal static CpuTimes? ReadCpuTimes()
+        {
+            CpuTimes times;
+            return GetSystemTimes(out times.Idle, out times.Kernel, out times.User) ? (CpuTimes?)times : null;
+        }
+
+        internal static double? CpuUsage(CpuTimes? before, CpuTimes? after)
+        {
+            if (!before.HasValue || !after.HasValue)
+                return null;
+            CpuTimes first = before.Value, last = after.Value;
+            if (last.Kernel < first.Kernel || last.User < first.User || last.Idle < first.Idle)
+                return null;
+            double total = (double)(last.Kernel - first.Kernel) + (last.User - first.User);
+            return total > 0 ? (double?)Math.Max(0, 100 * (1 - (last.Idle - first.Idle) / total)) : null;
+        }
+
+        internal static uint? ReadMemoryLoad()
+        {
+            var memory = new MemoryStatus { Size = (uint)Marshal.SizeOf(typeof(MemoryStatus)) };
+            return GlobalMemoryStatusEx(ref memory) ? (uint?)memory.Load : null;
+        }
+
         private static Finding CheckResources()
         {
-            ulong firstIdle, firstKernel, firstUser, idle, kernel, user;
-            if (!GetSystemTimes(out firstIdle, out firstKernel, out firstUser))
-                throw new InvalidOperationException();
+            CpuTimes? first = ReadCpuTimes();
             Thread.Sleep(1500);
-            if (!GetSystemTimes(out idle, out kernel, out user))
-                throw new InvalidOperationException();
-            ulong elapsed = kernel - firstKernel + user - firstUser;
-            if (elapsed == 0)
-                throw new InvalidOperationException();
-
-            double usage = Math.Max(0, Math.Min(100, 100 * (1 - (idle - firstIdle) / (double)elapsed)));
-            var memory = new MemoryStatus { Size = (uint)Marshal.SizeOf(typeof(MemoryStatus)) };
-            if (!GlobalMemoryStatusEx(ref memory))
+            double? usage = CpuUsage(first, ReadCpuTimes());
+            uint? memory = ReadMemoryLoad();
+            if (!usage.HasValue || !memory.HasValue)
                 throw new InvalidOperationException();
 
-            string detail = string.Format("CPU {0:0}%（约 1.5 秒平均），物理内存使用 {1}%。", usage, memory.Load);
-            if (usage >= 90 || memory.Load >= 90)
+            string detail = string.Format("CPU {0:0}%（约 1.5 秒平均），物理内存使用 {1}%。", usage, memory);
+            if (usage >= 90 || memory >= 90)
                 return new Finding("CPU 与内存", CheckState.Warning, detail,
                     "如果卡顿仍在，打开任务管理器，按 CPU 或内存排序并观察一段时间。", "taskmgr", detail);
             return new Finding("CPU 与内存", CheckState.Clear, detail, shareDetail: detail);

@@ -60,6 +60,32 @@ namespace SafeTriage
         }
     }
 
+    internal sealed class PerformancePoint
+    {
+        public readonly double Offset;
+        public readonly double? Cpu, Memory, Disk;
+
+        public PerformancePoint(double offset, double? cpu, double? memory, double? disk)
+        {
+            Offset = offset;
+            Cpu = cpu;
+            Memory = memory;
+            Disk = disk;
+        }
+    }
+
+    internal sealed class PerformanceSeries
+    {
+        public readonly PerformancePoint[] Points;
+        public readonly double[] Marks;
+
+        public PerformanceSeries(PerformancePoint[] points, double[] marks)
+        {
+            Points = points;
+            Marks = marks;
+        }
+    }
+
     internal static class PerformanceCapture
     {
         [StructLayout(LayoutKind.Sequential)]
@@ -161,15 +187,19 @@ namespace SafeTriage
             return Task.Run(async delegate
             {
                 var clock = marks.Clock;
-                var processTotals = new Dictionary<Tuple<int, long>, Totals>();
                 var disk = new List<double>();
                 var intervals = new List<Interval>();
+                var points = new List<PerformancePoint>();
+                Dictionary<Tuple<int, long>, Totals> processTotals;
                 double measured = 0;
                 using (var meter = new DiskMeter())
                 {
                     meter.Read();
                     var before = ReadProcesses(token);
+                    processTotals = InitialTotals(before.Values);
+                    var cpuBefore = Diagnostics.ReadCpuTimes();
                     double beforeAt = clock.Elapsed.TotalSeconds;
+                    points.Add(new PerformancePoint(beforeAt, null, Diagnostics.ReadMemoryLoad(), null));
                     for (int step = 1; !token.IsCancellationRequested && measured < seconds; step++)
                     {
                         await CaptureTiming.PauseUntil(clock, step, token).ConfigureAwait(false);
@@ -179,7 +209,11 @@ namespace SafeTriage
                         var current = ReadProcesses(token);
                         if (token.IsCancellationRequested)
                             break;
+                        var cpuNow = Diagnostics.ReadCpuTimes();
                         var interval = new Interval { From = beforeAt, To = clock.Elapsed.TotalSeconds, DiskRate = meter.Read() };
+                        points.Add(new PerformancePoint(interval.To, Diagnostics.CpuUsage(cpuBefore, cpuNow),
+                            Diagnostics.ReadMemoryLoad(), interval.DiskRate / (1024 * 1024)));
+                        cpuBefore = cpuNow;
                         Accumulate(before, current, processTotals, interval);
                         before = current;
                         beforeAt = interval.To;
@@ -191,8 +225,15 @@ namespace SafeTriage
                             progress.Report(CaptureTiming.Progress(clock, seconds));
                     }
                 }
-                return Describe(measured, intervals, processTotals.Values.ToArray(), disk, token.IsCancellationRequested, marks.Complete());
+                var series = new PerformanceSeries(points.ToArray(), marks.Complete());
+                return Describe(measured, intervals, processTotals.Values.ToArray(), disk, token.IsCancellationRequested, series);
             });
+        }
+
+        private static Dictionary<Tuple<int, long>, Totals> InitialTotals(IEnumerable<Sample> samples)
+        {
+            return samples.ToDictionary(sample => Tuple.Create(sample.Id, sample.Created),
+                sample => new Totals { Name = sample.Name, PeakMemory = sample.Memory });
         }
 
         private static void Accumulate(Dictionary<int, Sample> before, Dictionary<int, Sample> current,
@@ -229,20 +270,24 @@ namespace SafeTriage
             }
         }
 
-        private static Report Describe(double duration, List<Interval> intervals, Totals[] processes, List<double> disk, bool stopped, double[] marks)
+        private static Report Describe(double duration, List<Interval> intervals, Totals[] processes, List<double> disk,
+            bool stopped, PerformanceSeries performance)
         {
             string summary = string.Format("{0}，共记录 {1:0.0} 秒、{2} 轮，覆盖 {3} 个可读取的进程实例。",
                 stopped ? "已停止记录" : "记录完成", duration, intervals.Count, processes.Length);
             var findings = new List<Finding>();
-            if (marks.Length > 0)
-                findings.Add(new Finding("故障标记附近的负载", CheckState.Info, DescribeMarks(intervals, marks, true),
-                    "读数来自覆盖标记的采样区间，可结合卡顿时的操作进一步核对。", shareDetail: DescribeMarks(intervals, marks, false)));
-            if (processes.Length > 0 && duration > 0)
-            {
-                AddRanking(findings, "进程 CPU 平均占用", processes.Where(p => p.ProcessorSeconds > 0).OrderByDescending(p => p.ProcessorSeconds),
-                    process => Math.Min(100, 100 * process.ProcessorSeconds / (Environment.ProcessorCount * duration)).ToString("0.0") + "%");
+            if (performance.Marks.Length > 0)
+                findings.Add(new Finding("故障标记附近的负载", CheckState.Info, DescribeMarks(intervals, performance.Marks, true),
+                    "读数来自覆盖标记的采样区间，可结合卡顿时的操作进一步核对。",
+                    shareDetail: DescribeMarks(intervals, performance.Marks, false)));
+            double sampleDuration = intervals.Sum(interval => interval.To - interval.From);
+            if (processes.Length > 0)
                 AddRanking(findings, "进程内存峰值", processes.Where(p => p.PeakMemory > 0).OrderByDescending(p => p.PeakMemory),
                     process => Size(process.PeakMemory) + " MB");
+            if (processes.Length > 0 && sampleDuration > 0)
+            {
+                AddRanking(findings, "进程 CPU 平均占用", processes.Where(p => p.ProcessorSeconds > 0).OrderByDescending(p => p.ProcessorSeconds),
+                    process => Math.Min(100, 100 * process.ProcessorSeconds / (Environment.ProcessorCount * sampleDuration)).ToString("0.0") + "%");
                 if (processes.Any(process => process.IoObserved))
                     AddRanking(findings, "进程读写 I/O", processes.Where(p => p.ReadBytes + p.WriteBytes > 0).OrderByDescending(p => p.ReadBytes + p.WriteBytes),
                         process => "读 " + Size(process.ReadBytes) + " MB · 写 " + Size(process.WriteBytes) + " MB",
@@ -253,7 +298,7 @@ namespace SafeTriage
             }
             else
             {
-                findings.Add(new Finding("进程样本", CheckState.Unavailable, "未取得可用进程样本。可在卡顿出现时重新记录。"));
+                findings.Add(new Finding("进程 CPU 与 I/O", CheckState.Unavailable, "未取得完整的采样区间。可在卡顿出现时重新记录。"));
             }
             if (disk.Count > 0)
             {
@@ -266,7 +311,9 @@ namespace SafeTriage
             {
                 findings.Add(new Finding("物理磁盘读写速率", CheckState.Unavailable, "当前没有可用的 Windows 物理磁盘计数器样本。"));
             }
-            return new Report(summary, findings.ToArray(), summary);
+            bool hasReadings = performance.Points.Any(point => point.Cpu.HasValue || point.Memory.HasValue || point.Disk.HasValue);
+            return new Report(summary, findings.ToArray(), summary, canCompare: intervals.Count > 0,
+                performance: hasReadings ? performance : null);
         }
 
         private static string DescribeMarks(List<Interval> intervals, double[] marks, bool includeNames)
@@ -368,7 +415,8 @@ namespace SafeTriage
             public double Offset;
             public Finding Gateway;
             public Finding Dns;
-            public Finding Https;
+            public Finding SystemHttps;
+            public Finding DirectHttps;
         }
 
         public static Task<Report> RunAsync(Uri target, int seconds, IProgress<string> progress, CancellationToken token, CaptureMarks marks)
@@ -413,9 +461,15 @@ namespace SafeTriage
         {
             Task<Finding> gateway = Diagnostics.Probe(ReadGateway, 2300, error => NotAvailable("网关", error), token);
             Task<Finding> dns = Diagnostics.Probe(() => NetworkDiagnostics.CheckDns(target), 4500, error => NotAvailable("本机 DNS", error), token);
-            Task<NetworkDiagnostics.HttpsResult> https = NetworkDiagnostics.TestHttps(target, true, token);
-            await Task.WhenAll(gateway, dns, https).ConfigureAwait(false);
-            return new Round { Gateway = gateway.Result, Dns = dns.Result, Https = https.Result.ToFinding("HTTPS") };
+            Task<NetworkDiagnostics.HttpsResult> system = NetworkDiagnostics.TestHttps(target, true, token);
+            Task<NetworkDiagnostics.HttpsResult> direct = NetworkDiagnostics.TestHttps(target, false, token);
+            await Task.WhenAll(gateway, dns, system, direct).ConfigureAwait(false);
+            return new Round
+            {
+                Gateway = gateway.Result, Dns = dns.Result,
+                SystemHttps = system.Result.ToFinding("系统代理设置"),
+                DirectHttps = direct.Result.ToFinding("应用不使用代理")
+            };
         }
 
         private static Finding NotAvailable(string title, string error)
@@ -460,7 +514,7 @@ namespace SafeTriage
 
         private static Report Describe(List<Round> rounds, double elapsed, bool stopped, double[] marks)
         {
-            string summary = string.Format("{0}，约 {1:0} 秒、{2} 轮。每轮并行检查网关、DNS 和 HTTPS。",
+            string summary = string.Format("{0}，约 {1:0} 秒、{2} 轮。每轮并行检查网关、DNS 和两条 HTTPS 路径。",
                 stopped ? "已停止记录" : "记录完成", elapsed, rounds.Count);
             var entries = new List<Finding>();
             if (marks.Length > 0)
@@ -477,12 +531,16 @@ namespace SafeTriage
             if (rounds.Count == 0)
             {
                 entries.Add(NotAvailable("断网记录", "结束前未取得完整采样。"));
-                return new Report(summary, entries.ToArray(), summary);
+                return new Report(summary, entries.ToArray(), summary, canCompare: false);
             }
-            Round first = rounds.FirstOrDefault(round => IsError(round.Dns) || IsError(round.Https));
+            Round first = rounds.FirstOrDefault(round => IsError(round.Dns) || IsError(round.SystemHttps) || IsError(round.DirectHttps));
             if (first != null)
             {
-                string at = IsError(first.Dns) ? (IsError(first.Https) ? "DNS 和 HTTPS" : "DNS") : "HTTPS";
+                var problems = new List<string>();
+                if (IsError(first.Dns)) problems.Add("DNS");
+                if (IsError(first.SystemHttps)) problems.Add("系统代理设置路径");
+                if (IsError(first.DirectHttps)) problems.Add("应用不使用代理路径");
+                string at = string.Join("、", problems);
                 summary += string.Format(" 首次记录到异常为 {0:HH:mm:ss}，涉及 {1}。", first.Time, at);
             }
             entries.AddRange(new[]
@@ -491,29 +549,39 @@ namespace SafeTriage
                     "网关可能禁用 ICMP。若只有网关未回应，结合 DNS 和 HTTPS 结果判断。", "networkSettings"),
                 Summarize("本机 DNS", rounds.Select(round => round.Dns),
                     "如果网关连通而 DNS 反复失败，可核对当前 DNS 设置或换一个域名对照。", "networkSettings"),
-                Summarize("HTTPS（系统代理设置）", rounds.Select(round => round.Https),
-                    "如果 DNS 和网关正常而 HTTPS 波动，继续用网络排查对比两条代理路径。", "network")
+                Summarize("HTTPS（系统代理设置）", rounds.Select(round => round.SystemHttps),
+                    "如果仅这条路径异常，核对 Windows 代理和自动配置脚本。", "proxySettings"),
+                Summarize("HTTPS（应用不使用代理）", rounds.Select(round => round.DirectHttps),
+                    "这条路径仍可能经过 VPN。可和系统代理设置路径逐轮对比。", "network")
             });
-            string history = string.Join("\n", rounds.Select(round => string.Format("{0:HH:mm:ss}  网关 {1} · DNS {2} · HTTPS {3}",
-                round.Time, Stage(round.Gateway), Stage(round.Dns), Stage(round.Https))));
+            string history = string.Join("\n", rounds.Select(round => string.Format("{0:HH:mm:ss} · {1}\n{2}",
+                round.Time, CaptureMarks.At(round.Offset), RoundEvidence(round))));
             entries.Add(new Finding("逐轮记录", CheckState.Info, history, shareDetail: history));
             return new Report(summary, entries.ToArray(), summary);
         }
 
         private static string NearRound(Round round)
         {
-            return round == null ? "没有完整采样" : string.Format("{0} · 网关 {1} · DNS {2} · HTTPS {3}",
-                CaptureMarks.At(round.Offset), Stage(round.Gateway), Stage(round.Dns), Stage(round.Https));
+            return round == null ? "没有完整采样" : CaptureMarks.At(round.Offset) + "\n  " + RoundEvidence(round);
+        }
+
+        private static string RoundEvidence(Round round)
+        {
+            return string.Format("网关 {0} · DNS {1} · 系统代理设置 {2} · 应用不使用代理 {3}",
+                Stage(round.Gateway), Stage(round.Dns), Stage(round.SystemHttps), Stage(round.DirectHttps));
         }
 
         private static string Stage(Finding finding)
         {
+            if (finding.ShareDetail != null && (finding.ShareDetail.StartsWith("HTTP ", StringComparison.Ordinal) ||
+                finding.ShareDetail.StartsWith("返回 HTTP ", StringComparison.Ordinal)))
+                return finding.ShareDetail;
             if (finding.State == CheckState.Clear)
                 return "通过";
             if (finding.State == CheckState.Unavailable)
                 return "未完成";
             if (finding.State == CheckState.Info)
-                return finding.ShareDetail != null && finding.ShareDetail.StartsWith("HTTP ", StringComparison.Ordinal) ? finding.ShareDetail : "供参考";
+                return "供参考";
             return "异常";
         }
 
