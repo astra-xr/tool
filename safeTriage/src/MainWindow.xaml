@@ -480,7 +480,7 @@
                                 <TextBox x:Name="NetworkTarget" Text="www.microsoft.com" Style="{StaticResource Field}" MaxLength="500" AutomationProperties.Name="目标网站"/>
                             </DockPanel>
                             <TextBlock x:Name="NetworkInputError" Visibility="Collapsed" Foreground="{StaticResource Accent}" FontSize="13" Margin="0,8,0,0" TextWrapping="Wrap"/>
-                            <TextBlock Text="输入域名或 HTTPS 地址。只测试网站首页，自选网站会与 www.microsoft.com 对照。"
+                            <TextBlock Text="输入域名可测首页，也可指定 HTTPS 路径。检测会忽略查询参数和片段，自选地址会与 www.microsoft.com 对照。"
                                        Foreground="{StaticResource Muted}" FontSize="13" TextWrapping="Wrap" Margin="0,11,0,0"/>
                             <DockPanel Margin="0,14,0,0">
                                 <Button x:Name="NetworkRecordButton" DockPanel.Dock="Right" Content="记录 60 秒" Style="{StaticResource SecondaryButton}"

@@ -1,10 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -15,6 +19,10 @@ namespace SafeTriage
     {
         private enum LocalConnection { Connected, Failed, Restricted }
         private static readonly Uri ReferenceSite = new Uri("https://www.microsoft.com/");
+        private static readonly string UserAgent = "safeTriage/" + typeof(NetworkDiagnostics).Assembly.GetName().Version.ToString(3);
+        private const int RecordingHttpsBudget = 3700;
+        private const int ManualHeadTimeout = 8000;
+        private const int ManualGetTimeout = 12000;
 
         public static bool TryTarget(string text, out Uri target)
         {
@@ -28,7 +36,7 @@ namespace SafeTriage
                 || parsed.Scheme != "https" || parsed.Port <= 0 || parsed.UserInfo.Length != 0 || parsed.HostNameType == UriHostNameType.Unknown)
                 return false;
 
-            target = new UriBuilder("https", parsed.IdnHost, parsed.IsDefaultPort ? -1 : parsed.Port, "/").Uri;
+            target = new UriBuilder("https", parsed.IdnHost, parsed.IsDefaultPort ? -1 : parsed.Port, parsed.AbsolutePath).Uri;
             return true;
         }
 
@@ -156,37 +164,61 @@ namespace SafeTriage
         internal sealed class HttpsResult
         {
             public int? Status;
+            public int? ProxyTunnelStatus;
             public string Failure;
             public bool Restricted;
             public bool Incomplete;
-            public int? RejectedHeadStatus;
+            public int? InitialHeadStatus;
             public string GetFailure;
+            public string ForbiddenEvidence;
             public bool Unavailable { get { return Restricted || Incomplete; } }
             public bool Reached { get { return Status.HasValue && Status.Value != 407; } }
             public bool UsableAsReference { get { return Status >= 200 && Status < 400; } }
-            public bool HeadRejected { get { return !RejectedHeadStatus.HasValue && (Status == 405 || Status == 501); } }
+            public bool NeedsGetFallback { get { return !InitialHeadStatus.HasValue && (Status == 403 || Status == 405 || Status == 501); } }
 
             public string Describe()
             {
+                string status = DescribeStatus();
+                return string.IsNullOrEmpty(ForbiddenEvidence) ? status : status + "。" + ForbiddenEvidence;
+            }
+
+            public string DescribeStatus()
+            {
+                if (ProxyTunnelStatus.HasValue)
+                {
+                    string tunnel = "代理 CONNECT 返回 HTTP " + ProxyTunnelStatus.Value;
+                    return InitialHeadStatus.HasValue ? tunnel + "（GET 补测，HEAD 返回 HTTP " + InitialHeadStatus.Value + "）" : tunnel;
+                }
                 if (!Status.HasValue)
                     return Failure;
                 string response = "HTTP " + Status.Value;
-                if (RejectedHeadStatus.HasValue)
-                    return response + "（GET 补测，HEAD 返回 HTTP " + RejectedHeadStatus.Value + "）";
-                return HeadRejected ? response + "（HEAD 不受支持" +
-                    (GetFailure == null ? "，未取得 GET 结果" : "，GET 补测：" + GetFailure.TrimEnd('。')) + "）" : response;
+                if (InitialHeadStatus.HasValue)
+                {
+                    bool redirect = Status == 301 || Status == 302 || Status == 303 || Status == 307 || Status == 308;
+                    return response + (redirect ? "（GET 补测收到重定向，HEAD 返回 HTTP " : "（GET 补测，HEAD 返回 HTTP ") +
+                        InitialHeadStatus.Value + "）";
+                }
+                if (!NeedsGetFallback)
+                    return response;
+                return response + "（HEAD 返回，" + (GetFailure == null ? "GET 补测未完成" : "GET 补测未取得 HTTP 响应，" + GetFailure.TrimEnd('。')) + "）";
             }
 
             public Finding ToFinding(string name)
             {
-                if (Status == 407)
-                    return new Finding(name, CheckState.Warning, "返回 HTTP 407，代理要求身份验证。",
-                        "检查当前网络或代理账号的配置。", "proxySettings", "返回 HTTP 407，代理要求身份验证。");
+                if (Status == 407 || ProxyTunnelStatus.HasValue)
+                {
+                    string detail = ProxyTunnelStatus.HasValue ? DescribeStatus() : "返回 " + DescribeStatus();
+                    detail += Status == 407 || ProxyTunnelStatus == 407 ? "，代理要求身份验证。" : "，代理未建立到目标站点的 HTTPS 隧道。";
+                    if (!string.IsNullOrEmpty(ForbiddenEvidence))
+                        detail += ForbiddenEvidence + "。";
+                    return new Finding(name, CheckState.Warning, detail,
+                        "核对代理客户端的连接日志和当前代理配置。", "proxySettings", detail);
+                }
                 if (Unavailable)
                     return new Finding(name, CheckState.Unavailable, Failure, shareDetail: Failure);
                 if (!Reached)
                     return new Finding(name, CheckState.Warning, Failure, shareDetail: Failure);
-                if (HeadRejected)
+                if (NeedsGetFallback)
                     return new Finding(name, CheckState.Info, Describe() + "。HTTPS 已收到响应，网页能否正常打开仍待确认。",
                         "可在浏览器打开原始地址核对。", shareDetail: Describe());
                 if (Status >= 400)
@@ -196,37 +228,76 @@ namespace SafeTriage
             }
         }
 
-        private static HttpsResult ReadHttps(Uri target, bool useWindowsProxy, CancellationToken stop)
+        internal static HttpsResult ProbeMethods(Func<string, int, HttpsResult> request, CancellationToken stop, bool recording)
         {
-            return ProbeMethods((method, timeout) => ReadHttpsResponse(target, useWindowsProxy, method, timeout, stop), stop);
-        }
-
-        internal static HttpsResult ProbeMethods(Func<string, int, HttpsResult> request, CancellationToken stop)
-        {
-            const int budget = 3700;
             var elapsed = Stopwatch.StartNew();
-            HttpsResult head = request("HEAD", budget);
-            int remaining = budget - (int)elapsed.ElapsedMilliseconds;
-            if (!head.HeadRejected || remaining <= 0 || stop.IsCancellationRequested)
+            HttpsResult head = request("HEAD", recording ? RecordingHttpsBudget : ManualHeadTimeout);
+            int getTimeout = recording ? RecordingHttpsBudget - (int)elapsed.ElapsedMilliseconds : ManualGetTimeout;
+            if (!head.NeedsGetFallback || getTimeout <= 0 || stop.IsCancellationRequested)
                 return head;
 
-            HttpsResult get = request("GET", remaining);
-            if (get.Status.HasValue)
+            HttpsResult get = request("GET", getTimeout);
+            if (get.Status.HasValue || get.ProxyTunnelStatus.HasValue)
             {
-                get.RejectedHeadStatus = head.Status;
+                get.InitialHeadStatus = head.Status;
+                if (!string.IsNullOrEmpty(head.ForbiddenEvidence))
+                    get.ForbiddenEvidence = string.IsNullOrEmpty(get.ForbiddenEvidence) ? head.ForbiddenEvidence :
+                        head.ForbiddenEvidence + "。" + get.ForbiddenEvidence;
                 return get;
             }
             head.GetFailure = get.Failure;
             return head;
         }
 
-        private static HttpsResult ReadHttpsResponse(Uri target, bool useWindowsProxy, string method, int timeout, CancellationToken stop)
+        internal static string ForbiddenMarkers(WebHeaderCollection headers, string body)
+        {
+            var markers = new List<string>();
+            string server = (headers["Server"] ?? "").Trim();
+            foreach (string product in new[] { "AkamaiGHost", "Microsoft-Azure-Application-Gateway", "Microsoft-IIS",
+                "Microsoft-HTTPAPI", "cloudflare", "CloudFront", "envoy", "squid", "nginx", "Apache" })
+            {
+                if (server.Equals(product, StringComparison.OrdinalIgnoreCase) || server.StartsWith(product + "/", StringComparison.OrdinalIgnoreCase))
+                    markers.Add("Server=" + product);
+            }
+            if (headers["X-Azure-Ref"] != null) markers.Add("X-Azure-Ref");
+            if (headers["X-MSEdge-Ref"] != null) markers.Add("X-MSEdge-Ref");
+            if (string.Equals(headers["cf-mitigated"], "challenge", StringComparison.OrdinalIgnoreCase)) markers.Add("cf-mitigated=challenge");
+            if (Regex.IsMatch(headers["X-Squid-Error"] ?? "", @"^ERR_ACCESS_DENIED(?:\s|$)", RegexOptions.IgnoreCase))
+                markers.Add("X-Squid-Error=ERR_ACCESS_DENIED");
+            if (Regex.IsMatch(body, @"https?://errors\.edgesuite\.net/", RegexOptions.IgnoreCase))
+                markers.Add("错误页含 errors.edgesuite.net");
+            if (Regex.IsMatch(body, @"\b(?:missing user-agent|user-agent header is required)\b", RegexOptions.IgnoreCase))
+                markers.Add("错误页提及缺少 User-Agent");
+            return markers.Count == 0 ? "未识别到服务标记" : string.Join("、", markers);
+        }
+
+        private static string ErrorBodyPrefix(HttpWebResponse response)
+        {
+            // Only inspect an already buffered body or a stream with a bounded read.
+            try
+            {
+                Stream stream = response.GetResponseStream();
+                if (stream == null || (!stream.CanTimeout && !(stream is MemoryStream)))
+                    return "";
+                if (stream.CanTimeout) stream.ReadTimeout = 300;
+                var buffer = new byte[4096];
+                int count = stream.Read(buffer, 0, buffer.Length);
+                return Encoding.ASCII.GetString(buffer, 0, count);
+            }
+            catch (IOException) { return ""; }
+            catch (WebException) { return ""; }
+            catch (InvalidOperationException) { return ""; }
+            catch (NotSupportedException) { return ""; }
+        }
+
+        internal static HttpsResult ReadHttpsResponse(Uri target, IWebProxy proxy, string method, int timeout, CancellationToken stop, bool recording)
         {
             try
             {
                 var request = (HttpWebRequest)WebRequest.Create(target);
                 request.Method = method;
-                request.Proxy = useWindowsProxy ? WebRequest.GetSystemWebProxy() : null;
+                request.Proxy = proxy;
+                request.UserAgent = UserAgent;
                 request.AllowAutoRedirect = false;
                 request.Timeout = timeout;
                 request.ReadWriteTimeout = timeout;
@@ -242,7 +313,15 @@ namespace SafeTriage
                 {
                     var http = response as HttpWebResponse;
                     if (http != null)
-                        return new HttpsResult { Status = (int)http.StatusCode };
+                    {
+                        if (string.Equals(http.Method, "CONNECT", StringComparison.OrdinalIgnoreCase))
+                            return new HttpsResult { ProxyTunnelStatus = (int)http.StatusCode };
+                        var result = new HttpsResult { Status = (int)http.StatusCode };
+                        if (!recording && result.Status == 403)
+                            result.ForbiddenEvidence = method + " 拒绝响应：" + ForbiddenMarkers(http.Headers,
+                                method == "GET" && !stop.IsCancellationRequested ? ErrorBodyPrefix(http) : "");
+                        return result;
+                    }
                 }
 
                 var socket = error.GetBaseException() as SocketException;
@@ -257,7 +336,11 @@ namespace SafeTriage
                     case WebExceptionStatus.NameResolutionFailure: reason = "目标域名解析失败。"; break;
                     case WebExceptionStatus.ProxyNameResolutionFailure: reason = "代理主机名解析失败。"; break;
                     case WebExceptionStatus.ConnectFailure: reason = "无法建立连接。"; break;
-                    case WebExceptionStatus.Timeout: reason = "等待响应超时。"; break;
+                    case WebExceptionStatus.SendFailure: reason = "HTTPS 请求未能完整发出。"; break;
+                    case WebExceptionStatus.ReceiveFailure: reason = "未能完整接收 HTTPS 响应。"; break;
+                    case WebExceptionStatus.Timeout:
+                        reason = "等待响应超时，探测时限 " + (timeout / 1000d).ToString("0.###", CultureInfo.InvariantCulture) + " 秒。";
+                        break;
                     case WebExceptionStatus.TrustFailure: reason = "Windows 无法验证证书。"; break;
                     case WebExceptionStatus.SecureChannelFailure: reason = "TLS 握手失败。"; break;
                     default: reason = "没有收到 HTTPS 响应（" + error.Status + "）。"; break;
@@ -295,13 +378,20 @@ namespace SafeTriage
             return Diagnostics.Probe(read, 4500, message => new Finding(name, CheckState.Unavailable, message));
         }
 
-        internal static async Task<HttpsResult> TestHttps(Uri target, bool useWindowsProxy,
+        internal static async Task<HttpsResult> TestHttps(Uri target, bool useWindowsProxy, bool recording = false,
             CancellationToken stop = default(CancellationToken))
         {
+            const int completionGrace = 1500;
+            int limit = (recording ? RecordingHttpsBudget : ManualHeadTimeout + ManualGetTimeout) + completionGrace;
             using (var requestStop = CancellationTokenSource.CreateLinkedTokenSource(stop))
             {
                 CancellationToken requestToken = requestStop.Token;
-                HttpsResult result = await Diagnostics.Probe(() => ReadHttps(target, useWindowsProxy, requestToken), 5200,
+                HttpsResult result = await Diagnostics.Probe(() =>
+                {
+                    IWebProxy proxy = useWindowsProxy ? WebRequest.GetSystemWebProxy() : null;
+                    return ProbeMethods((method, timeout) => ReadHttpsResponse(target, proxy, method, timeout, requestToken, recording),
+                        requestToken, recording);
+                }, limit,
                     message => new HttpsResult { Incomplete = true, Failure = message }, stop).ConfigureAwait(false);
                 if (result.Incomplete) requestStop.Cancel();
                 return result;
@@ -336,21 +426,22 @@ namespace SafeTriage
 
         private static string Summarize(CheckState link, CheckState proxy, CheckState dns, HttpsResult direct, HttpsResult system, bool referenceReached)
         {
-            if (system.Status == 407)
+            if (system.Status == 407 || system.ProxyTunnelStatus.HasValue)
             {
-                string directResponse = direct.Reached ? "应用不使用代理时返回 " + direct.Describe() + "。" : "";
-                return directResponse + "使用系统代理设置时返回 HTTP 407，代理要求身份验证。先检查代理账号或当前网络的访问要求。";
+                string directResponse = direct.Reached ? "应用不使用代理时返回 " + direct.DescribeStatus() + "。" : "";
+                string systemAdvice = system.Status == 407 || system.ProxyTunnelStatus == 407 ? "，请检查代理身份验证。" : "，请核对代理客户端的连接日志。";
+                return directResponse + "系统代理路径的结果为 " + system.DescribeStatus() + systemAdvice;
             }
             if (direct.Unavailable || system.Unavailable)
             {
                 string working = direct.Reached ? "不使用代理的请求已收到响应。" : system.Reached ? "使用系统代理设置的请求已收到响应。" : "";
                 return working + "有 HTTPS 探测未完成。可查看各路径的检测记录，再用同一目标复查。";
             }
-            if (direct.Status.HasValue && system.Status.HasValue && direct.Status != system.Status)
-                return "应用不使用代理时返回 " + direct.Describe() + "，使用系统代理设置时返回 " + system.Describe() + "。";
-            if (direct.HeadRejected || system.HeadRejected)
-                return "应用不使用代理：" + direct.Describe().TrimEnd('。') + "；系统代理设置：" +
-                    system.Describe().TrimEnd('。') + "。请用浏览器打开原始地址核对。";
+            if (direct.Status.HasValue && system.Status.HasValue && direct.DescribeStatus() != system.DescribeStatus())
+                return "应用不使用代理时返回 " + direct.DescribeStatus() + "，使用系统代理设置时返回 " + system.DescribeStatus() + "。";
+            if (direct.NeedsGetFallback || system.NeedsGetFallback)
+                return "应用不使用代理时，" + direct.DescribeStatus().TrimEnd('。') + "。使用系统代理设置时，" +
+                    system.DescribeStatus().TrimEnd('。') + "。请用浏览器打开同一地址核对。";
             if (direct.Reached && !system.Reached)
                 return proxy == CheckState.Warning ? "不使用代理时收到响应，本机代理端口连接失败。优先检查代理客户端和端口。" :
                     "不使用代理时收到响应，使用系统代理设置时失败。优先核对代理或自动配置脚本。";
@@ -358,7 +449,7 @@ namespace SafeTriage
                 return dns == CheckState.Warning ? "系统路径收到响应，但本机 DNS 查询失败。若仅个别应用打不开，检查该应用的连接方式。" :
                     "系统路径收到响应，但安诊不使用代理的请求失败。若仅个别应用打不开，先检查该应用的代理设置。";
             if (system.Reached)
-                return system.Status >= 400 ? "两条路径均返回 " + system.Describe() + "。用浏览器打开原始地址，核对访问限制或站点状态。" :
+                return system.Status >= 400 ? "两条探测路径均收到 " + system.DescribeStatus() + "。用浏览器打开同一地址，核对访问限制或站点状态。" :
                     "两种方式均收到目标地址的 HTTPS 响应。如果只有某个浏览器或应用打不开，优先检查其代理和扩展设置。";
             if (referenceReached)
                 return dns == CheckState.Warning ? "对照站点能响应，目标域名的本机 DNS 查询失败。先核对域名，再用另一台设备访问同一站点。" :

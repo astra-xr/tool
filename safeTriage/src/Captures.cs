@@ -461,8 +461,8 @@ namespace SafeTriage
         {
             Task<Finding> gateway = Diagnostics.Probe(ReadGateway, 2300, error => NotAvailable("网关", error), token);
             Task<Finding> dns = Diagnostics.Probe(() => NetworkDiagnostics.CheckDns(target), 4500, error => NotAvailable("本机 DNS", error), token);
-            Task<NetworkDiagnostics.HttpsResult> system = NetworkDiagnostics.TestHttps(target, true, token);
-            Task<NetworkDiagnostics.HttpsResult> direct = NetworkDiagnostics.TestHttps(target, false, token);
+            Task<NetworkDiagnostics.HttpsResult> system = NetworkDiagnostics.TestHttps(target, true, recording: true, stop: token);
+            Task<NetworkDiagnostics.HttpsResult> direct = NetworkDiagnostics.TestHttps(target, false, recording: true, stop: token);
             await Task.WhenAll(gateway, dns, system, direct).ConfigureAwait(false);
             return new Round
             {
@@ -574,7 +574,8 @@ namespace SafeTriage
         private static string Stage(Finding finding)
         {
             if (finding.ShareDetail != null && (finding.ShareDetail.StartsWith("HTTP ", StringComparison.Ordinal) ||
-                finding.ShareDetail.StartsWith("返回 HTTP ", StringComparison.Ordinal)))
+                finding.ShareDetail.StartsWith("返回 HTTP ", StringComparison.Ordinal) ||
+                finding.ShareDetail.StartsWith("代理 CONNECT ", StringComparison.Ordinal)))
                 return finding.ShareDetail;
             if (finding.State == CheckState.Clear)
                 return "通过";

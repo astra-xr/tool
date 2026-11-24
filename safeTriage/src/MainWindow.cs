@@ -226,12 +226,13 @@ namespace SafeTriage
             }
 
             error.Visibility = Visibility.Collapsed;
-            string scope = target.DnsSafeHost + ":" + target.Port.ToString(CultureInfo.InvariantCulture);
+            string scope = target.DnsSafeHost + ":" + target.Port.ToString(CultureInfo.InvariantCulture) + target.AbsolutePath;
+            string subtitle = target.AbsolutePath == "/" ? target.Authority : target.Authority + target.AbsolutePath;
             if (record)
                 return RunCapture("NetworkResults", "间歇断网记录", scope,
-                    (token, progress, marks) => NetworkCapture.RunAsync(target, 60, progress, token, marks), target.Authority,
+                    (token, progress, marks) => NetworkCapture.RunAsync(target, 60, progress, token, marks), subtitle,
                     () => Find<StackPanel>("NetworkPreview").Visibility = Visibility.Collapsed);
-            return RunCheck("NetworkResults", "网络排查", scope, () => NetworkDiagnostics.RunAsync(target), target.Authority,
+            return RunCheck("NetworkResults", "网络排查", scope, () => NetworkDiagnostics.RunAsync(target), subtitle,
                 completed: () =>
                 {
                     Find<StackPanel>("NetworkPreview").Visibility = Visibility.Collapsed;

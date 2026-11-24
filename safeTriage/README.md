@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/safetriage.png" width="96" alt="safeTriage 图标"></p>
 
-# 安诊 safeTriage 0.6.0
+# 安诊 safeTriage 0.6.4
 
 Windows 故障排查助手。检查电脑和网络异常，查看检测依据与处理建议，复查后对比前后变化。
 
@@ -8,9 +8,9 @@ Windows 故障排查助手。检查电脑和网络异常，查看检测依据与
 
 ## 下载
 
-[Windows x64 安装版](https://github.com/astra-xr/tool/releases/download/safetriage-v0.6.0/safeTriage-Setup-Windows-x64.exe)带中文安装向导，可选择安装目录和桌面快捷方式。安装后可从开始菜单打开，或通过 Windows「已安装的应用」卸载。
+[Windows x64 安装版](https://github.com/astra-xr/tool/releases/download/safetriage-v0.6.4/safeTriage-Setup-Windows-x64.exe)带中文安装向导，可选择安装目录和桌面快捷方式。安装后可从开始菜单打开，或通过 Windows「已安装的应用」卸载。
 
-[Windows x64 便携版](https://github.com/astra-xr/tool/releases/download/safetriage-v0.6.0/safeTriage-Windows-x64.exe)可直接运行。两种下载的 SHA-256 校验文件见 [安诊 0.6.0 Release](https://github.com/astra-xr/tool/releases/tag/safetriage-v0.6.0)。
+[Windows x64 便携版](https://github.com/astra-xr/tool/releases/download/safetriage-v0.6.4/safeTriage-Windows-x64.exe)可直接运行。两种下载的 SHA-256 校验文件见 [安诊 0.6.4 Release](https://github.com/astra-xr/tool/releases/tag/safetriage-v0.6.4)。
 
 ## 功能
 
@@ -26,7 +26,7 @@ Windows 故障排查助手。检查电脑和网络异常，查看检测依据与
 
 检测过程只读。报告导出省略域名、IP、路径和设备、进程名称。手动保存到诊断历史时，站点名称只在本机作为检索信息保存。日志、物理磁盘健康、服务状态和性能计数的可用性取决于当前 Windows 环境及权限。
 
-单次网络检测只访问网站首页。自选网站会和 `www.microsoft.com` 对照，两条测试路径均可能经过 VPN。卡顿报告同时展示系统物理磁盘吞吐量。具体进程的磁盘活动可从报告打开 Windows 资源监视器核对。
+输入域名可检测首页，也可指定 HTTPS 路径。检测会忽略查询参数和片段，自选地址会和 `www.microsoft.com` 首页对照。单次检测收到 HEAD 403、405 或 501 后会补测 GET，并显示请求结果或代理 CONNECT 状态。两条测试路径均可能经过 VPN。卡顿报告同时展示系统物理磁盘吞吐量。具体进程的磁盘活动可从报告打开 Windows 资源监视器核对。
 
 ## 本地构建
 
