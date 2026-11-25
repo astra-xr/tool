@@ -10,6 +10,9 @@ namespace SafeTriage
     internal static class StorageDiagnostics
     {
         private const double Gib = 1024.0 * 1024 * 1024;
+        private const string VolumeSource = "本地卷";
+        private const string DiskSource = "物理磁盘健康";
+        private const string EventSource = "近七天存储事件";
         private const string EventSources =
             "(Provider[@Name='disk'] and (EventID=7 or EventID=11 or EventID=51 or EventID=153 or EventID=157)) or " +
             "((Provider[@Name='Ntfs'] or Provider[@Name='Microsoft-Windows-Ntfs']) and (EventID=55 or EventID=98)) or " +
@@ -18,28 +21,36 @@ namespace SafeTriage
 
         public static async Task<Report> RunAsync()
         {
-            Task<Finding[]> volumes = Read("本地卷", ReadVolumes);
-            Task<Finding[]> hardware = Read("物理磁盘健康", ReadPhysicalDisks);
-            Task<Finding[]> logs = Read("存储事件", ReadEvents);
+            Task<Finding[]> volumes = Read(VolumeSource, ReadVolumes);
+            Task<Finding[]> hardware = Read(DiskSource, ReadPhysicalDisks);
+            Task<Finding[]> logs = Read(EventSource, ReadEvents);
             Finding[] findings = (await Task.WhenAll(volumes, hardware, logs).ConfigureAwait(false))
                 .SelectMany(part => part).ToArray();
+            return Summarize(findings);
+        }
+
+        internal static Report Summarize(Finding[] findings)
+        {
             int issues = findings.Count(item => item.State == CheckState.Error || item.State == CheckState.Warning);
             int unknown = findings.Count(item => item.State == CheckState.Unavailable);
-            string summary = issues > 0 ? "发现 " + issues + " 项存储线索需要检查。展开对应条目查看读数和事件来源。" :
+            string summary = unknown == findings.Length ? "本轮未取得可供判断的存储读数。" :
+                issues > 0 ? "发现 " + issues + " 项存储线索需要检查。展开对应条目查看读数和事件来源。" :
                 unknown > 0 ? "已取得的存储读数中未发现异常。" : "可读取的本地卷、物理磁盘健康和近期存储事件未发现异常。";
-            if (unknown > 0)
+            if (unknown > 0 && unknown < findings.Length)
                 summary += " 另有 " + unknown + " 项未完成读取。";
-            return new Report(summary, findings, summary);
+            string[] incomplete = findings.Where(item => item.State == CheckState.Unavailable && item.Source == item.Name)
+                .Select(item => item.Source).Distinct().ToArray();
+            return new Report(summary, findings, summary, incompleteSources: incomplete);
         }
 
         private static Task<Finding[]> Read(string name, Func<Finding[]> read)
         {
-            return Diagnostics.Probe(read, 5500, message => new[] { Missing(name, message) });
+            return Diagnostics.Probe(read, 5500, message => new[] { Missing(name, message, name) });
         }
 
-        private static Finding Missing(string name, string message, string shareName = null)
+        private static Finding Missing(string name, string message, string source, string shareName = null)
         {
-            return new Finding(name, CheckState.Unavailable, message, shareDetail: message, shareName: shareName);
+            return new Finding(name, CheckState.Unavailable, message, shareDetail: message, shareName: shareName, source: source);
         }
 
         internal static CheckState FreeSpaceState(long available, long total)
@@ -60,7 +71,7 @@ namespace SafeTriage
                 .OrderByDescending(drive => string.Equals(drive.Name, system, StringComparison.OrdinalIgnoreCase))
                 .ThenBy(drive => drive.Name, StringComparer.OrdinalIgnoreCase).ToArray();
             if (drives.Length == 0)
-                return new[] { Missing("本地卷", "未枚举到可检查的固定盘分区。") };
+                return new[] { Missing(VolumeSource, "未枚举到可检查的固定盘分区。", VolumeSource) };
 
             var rows = new List<Finding>();
             for (int i = 0; i < drives.Length; i++)
@@ -75,7 +86,7 @@ namespace SafeTriage
                     CheckState state = FreeSpaceState(available, total);
                     if (state == CheckState.Unavailable)
                     {
-                        rows.Add(Missing(title, "Windows 返回的容量数据不完整。", exported));
+                        rows.Add(Missing(title, "Windows 返回的容量数据不完整。", VolumeSource, exported));
                         continue;
                     }
 
@@ -83,10 +94,11 @@ namespace SafeTriage
                         drive.DriveFormat, available / Gib, total / Gib, available / (double)total);
                     string advice = state == CheckState.Clear ? null :
                         os ? "系统盘空间偏少。可在 Windows 存储设置查看清理建议。" : "剩余空间偏少。先核对这个盘上的大文件和应用，再决定是否迁移。";
-                    rows.Add(new Finding(title, state, detail, advice, advice == null ? null : "storage", detail, exported));
+                    rows.Add(new Finding(title, state, detail, advice, advice == null ? null : "storage", detail, exported,
+                        source: VolumeSource));
                 }
-                catch (IOException) { rows.Add(Missing(title, "这个卷当前未能读取，可能尚未就绪。", exported)); }
-                catch (UnauthorizedAccessException) { rows.Add(Missing(title, "当前账户不能读取这个卷。", exported)); }
+                catch (IOException) { rows.Add(Missing(title, "这个卷当前未能读取，可能尚未就绪。", VolumeSource, exported)); }
+                catch (UnauthorizedAccessException) { rows.Add(Missing(title, "当前账户不能读取这个卷。", VolumeSource, exported)); }
             }
             return rows.ToArray();
         }
@@ -121,9 +133,9 @@ namespace SafeTriage
             }
             catch (ManagementException)
             {
-                return new[] { Missing("物理磁盘健康", "Windows 存储提供程序未返回物理磁盘健康信息。") };
+                return new[] { Missing(DiskSource, "Windows 存储提供程序未返回物理磁盘健康信息。", DiskSource) };
             }
-            return rows.Count == 0 ? new[] { Missing("物理磁盘健康", "存储提供程序没有列出可读取的物理磁盘。") } : rows.ToArray();
+            return rows.Count == 0 ? new[] { Missing(DiskSource, "存储提供程序没有列出可读取的物理磁盘。", DiskSource) } : rows.ToArray();
         }
 
         internal static Finding DescribeDisk(int number, string deviceName, ushort health, ulong bytes)
@@ -138,7 +150,7 @@ namespace SafeTriage
                 detail += string.Format(" 容量 {0:0.0} GB。", bytes / Gib);
             string advice = health == 1 || health == 2 ? "先备份重要文件，再核对磁盘连接和厂商诊断结果。" : null;
             return new Finding(label.Length == 0 ? name : name + " · " + label, state, detail, advice,
-                shareDetail: detail, shareName: name);
+                shareDetail: detail, shareName: name, source: DiskSource);
         }
 
         private static Finding[] ReadEvents()
@@ -146,16 +158,16 @@ namespace SafeTriage
             const int limit = 24;
             WindowsEvent[] events = WindowsEvents.ReadRecent("System", "(" + EventSources + ") and (Level=1 or Level=2 or Level=3)", limit + 1);
             if (events.Length == 0)
-                return new[] { new Finding("近七天存储事件", CheckState.Clear, "系统日志中未找到匹配的磁盘或文件系统警告。") };
+                return new[] { new Finding(EventSource, CheckState.Clear, "系统日志中未找到匹配的磁盘或文件系统警告。", source: EventSource) };
 
             string detail = string.Join("\n", events.Take(limit).Select(item => string.Format("{0} · {1} / {2} · {3}",
                 item.Time.HasValue ? item.Time.Value.ToLocalTime().ToString("MM-dd HH:mm:ss") : "时间未知",
                 item.Provider, item.Id, EventLabel(item.Id))));
             if (events.Length > limit)
                 detail += "\n仅显示最近 " + limit + " 条。";
-            return new[] { new Finding("近七天存储事件", CheckState.Warning, detail,
+            return new[] { new Finding(EventSource, CheckState.Warning, detail,
                 "事件可能涉及不同磁盘。若同类错误重复出现，先备份重要文件，再按时间和设备核查相关日志。",
-                "systemLog", detail) };
+                "systemLog", detail, source: EventSource) };
         }
 
         private static string EventLabel(int id)

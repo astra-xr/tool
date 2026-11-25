@@ -129,7 +129,7 @@ namespace SafeTriage
         private static string Describe(Finding item, bool unconfirmed)
         {
             if (item == null)
-                return unconfirmed ? "未能核对（日志读取不完整）" : "未出现";
+                return unconfirmed ? "未能核对（读取不完整）" : "未出现";
             return Finding.Status(item.State) + (string.IsNullOrEmpty(item.ShareDetail) ? "" : " · " + item.ShareDetail);
         }
     }

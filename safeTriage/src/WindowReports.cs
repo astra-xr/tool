@@ -125,7 +125,7 @@ namespace SafeTriage
         private Border ComparisonSide(string label, Finding finding, bool unconfirmed)
         {
             var body = new StackPanel();
-            string status = finding != null ? Finding.Status(finding.State) : unconfirmed ? "未能核对（日志读取不完整）" : "未出现";
+            string status = finding != null ? Finding.Status(finding.State) : unconfirmed ? "未能核对（读取不完整）" : "未出现";
             body.Children.Add(Text(label + " · " + status,
                 12, ThemeBrush("Accent"), FontWeights.SemiBold));
             if (finding != null)

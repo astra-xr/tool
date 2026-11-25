@@ -187,22 +187,21 @@ namespace SafeTriage
             return Task.Run(async delegate
             {
                 var clock = marks.Clock;
-                var disk = new List<double>();
                 var intervals = new List<Interval>();
                 var points = new List<PerformancePoint>();
                 Dictionary<Tuple<int, long>, Totals> processTotals;
                 double measured = 0;
                 using (var meter = new DiskMeter())
                 {
-                    meter.Read();
                     var before = ReadProcesses(token);
                     processTotals = InitialTotals(before.Values);
                     var cpuBefore = Diagnostics.ReadCpuTimes();
+                    meter.Read();
                     double beforeAt = clock.Elapsed.TotalSeconds;
                     points.Add(new PerformancePoint(beforeAt, null, Diagnostics.ReadMemoryLoad(), null));
-                    for (int step = 1; !token.IsCancellationRequested && measured < seconds; step++)
+                    while (!token.IsCancellationRequested && beforeAt < seconds)
                     {
-                        await CaptureTiming.PauseUntil(clock, step, token).ConfigureAwait(false);
+                        await CaptureTiming.PauseUntil(clock, Math.Min(seconds, beforeAt + 1), token).ConfigureAwait(false);
                         if (token.IsCancellationRequested)
                             break;
 
@@ -217,8 +216,6 @@ namespace SafeTriage
                         Accumulate(before, current, processTotals, interval);
                         before = current;
                         beforeAt = interval.To;
-                        if (interval.DiskRate.HasValue)
-                            disk.Add(interval.DiskRate.Value);
                         intervals.Add(interval);
                         measured = interval.To;
                         if (progress != null)
@@ -226,7 +223,7 @@ namespace SafeTriage
                     }
                 }
                 var series = new PerformanceSeries(points.ToArray(), marks.Complete());
-                return Describe(measured, intervals, processTotals.Values.ToArray(), disk, token.IsCancellationRequested, series);
+                return Describe(measured, intervals, processTotals.Values.ToArray(), token.IsCancellationRequested, series);
             });
         }
 
@@ -270,7 +267,7 @@ namespace SafeTriage
             }
         }
 
-        private static Report Describe(double duration, List<Interval> intervals, Totals[] processes, List<double> disk,
+        private static Report Describe(double duration, List<Interval> intervals, Totals[] processes,
             bool stopped, PerformanceSeries performance)
         {
             string summary = string.Format("{0}，共记录 {1:0.0} 秒、{2} 轮，覆盖 {3} 个可读取的进程实例。",
@@ -300,10 +297,13 @@ namespace SafeTriage
             {
                 findings.Add(new Finding("进程 CPU 与 I/O", CheckState.Unavailable, "未取得完整的采样区间。可在卡顿出现时重新记录。"));
             }
-            if (disk.Count > 0)
+            Interval[] disk = intervals.Where(interval => interval.DiskRate.HasValue && interval.To > interval.From).ToArray();
+            if (disk.Length > 0)
             {
+                double recordedSeconds = disk.Sum(interval => interval.To - interval.From);
+                double average = disk.Sum(interval => interval.DiskRate.Value * (interval.To - interval.From)) / recordedSeconds;
                 string detail = string.Format("物理磁盘读写合计平均 {0} MB/s，采样峰值 {1} MB/s。",
-                    Size(disk.Average()), Size(disk.Max()));
+                    Size(average), Size(disk.Max(interval => interval.DiskRate.Value)));
                 findings.Add(new Finding("物理磁盘读写速率", CheckState.Info, detail,
                     "需要确认具体文件或进程时，复现卡顿并查看资源监视器的磁盘活动。", "resmon", detail));
             }

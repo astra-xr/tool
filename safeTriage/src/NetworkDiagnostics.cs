@@ -31,8 +31,10 @@ namespace SafeTriage
             if (text.Length == 0)
                 return true;
 
+            int schemeSeparator = text.IndexOf("://", StringComparison.Ordinal);
+            bool hasScheme = schemeSeparator >= 0 && text.IndexOfAny(new[] { '/', '?', '#' }) == schemeSeparator + 1;
             Uri parsed;
-            if (text.Length > 500 || !Uri.TryCreate(text.Contains("://") ? text : "https://" + text, UriKind.Absolute, out parsed)
+            if (text.Length > 500 || !Uri.TryCreate(hasScheme ? text : "https://" + text, UriKind.Absolute, out parsed)
                 || parsed.Scheme != "https" || parsed.Port <= 0 || parsed.UserInfo.Length != 0 || parsed.HostNameType == UriHostNameType.Unknown)
                 return false;
 
@@ -428,10 +430,14 @@ namespace SafeTriage
         {
             if (system.Status == 407 || system.ProxyTunnelStatus.HasValue)
             {
-                string directResponse = direct.Reached ? "应用不使用代理时返回 " + direct.DescribeStatus() + "。" : "";
                 string systemAdvice = system.Status == 407 || system.ProxyTunnelStatus == 407 ? "，请检查代理身份验证。" : "，请核对代理客户端的连接日志。";
-                return directResponse + "系统代理路径的结果为 " + system.DescribeStatus() + systemAdvice;
+                return "应用不使用代理时，" + direct.DescribeStatus().TrimEnd('。') +
+                    "。系统代理路径的结果为 " + system.DescribeStatus() + systemAdvice;
             }
+            if ((direct.Status >= 400 || system.Status >= 400) &&
+                (!direct.Reached || !system.Reached || direct.NeedsGetFallback || system.NeedsGetFallback))
+                return "应用不使用代理时，" + direct.DescribeStatus().TrimEnd('。') + "。使用系统代理设置时，" +
+                    system.DescribeStatus().TrimEnd('。') + "。请用浏览器打开同一地址核对。";
             if (direct.Unavailable || system.Unavailable)
             {
                 string working = direct.Reached ? "不使用代理的请求已收到响应。" : system.Reached ? "使用系统代理设置的请求已收到响应。" : "";
@@ -439,9 +445,6 @@ namespace SafeTriage
             }
             if (direct.Status.HasValue && system.Status.HasValue && direct.DescribeStatus() != system.DescribeStatus())
                 return "应用不使用代理时返回 " + direct.DescribeStatus() + "，使用系统代理设置时返回 " + system.DescribeStatus() + "。";
-            if (direct.NeedsGetFallback || system.NeedsGetFallback)
-                return "应用不使用代理时，" + direct.DescribeStatus().TrimEnd('。') + "。使用系统代理设置时，" +
-                    system.DescribeStatus().TrimEnd('。') + "。请用浏览器打开同一地址核对。";
             if (direct.Reached && !system.Reached)
                 return proxy == CheckState.Warning ? "不使用代理时收到响应，本机代理端口连接失败。优先检查代理客户端和端口。" :
                     "不使用代理时收到响应，使用系统代理设置时失败。优先核对代理或自动配置脚本。";

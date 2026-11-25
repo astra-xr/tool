@@ -176,6 +176,7 @@ namespace SafeTriage
         private const uint Present = 0x100;
         private const uint BufferSmall = 0x1A;
         private const uint HasProblem = 0x400;
+        private const string UsbSource = "USB";
 
         [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
         private static extern uint CM_Get_Device_ID_List_Size(out uint length, string filter, uint flags);
@@ -195,7 +196,12 @@ namespace SafeTriage
 
         public static Task<Report> UsbAsync()
         {
-            return Diagnostics.Probe(ReadUsb, 6000, error => new Report(error, new[] { Missing("USB 设备", error) }));
+            return Diagnostics.Probe(ReadUsb, 6000, UsbUnavailable);
+        }
+
+        internal static Report UsbUnavailable(string error)
+        {
+            return new Report(error, new[] { Missing("USB 识别情况", error) }, error, incompleteSources: new[] { UsbSource });
         }
 
         private sealed class UsbDevice
@@ -245,7 +251,8 @@ namespace SafeTriage
                 if (unknown > 0)
                     detail += unknown + " 个节点的状态无法读取。";
                 string advice = codes.Length > 0 ? string.Join(" ", codes.Select(UsbAdvice)) : null;
-                findings.Add(new Finding(group.Key, state, detail, advice, codes.Length > 0 ? "devices" : null, detail, "USB 设备条目"));
+                findings.Add(new Finding(group.Key, state, detail, advice, codes.Length > 0 ? "devices" : null, detail, "USB 设备条目",
+                    source: UsbSource));
             }
             return new Report(counts, findings.ToArray(), counts);
         }
@@ -283,13 +290,23 @@ namespace SafeTriage
                 {
                     uint status = CM_Get_Device_ID_List(null, buffer, size, Present);
                     if (status == 0)
-                        return Marshal.PtrToStringUni(buffer, (int)size).Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
+                        return ParseDeviceIds(Marshal.PtrToStringUni(buffer, (int)size));
                     if (status != BufferSmall)
                         break;
                 }
                 finally { Marshal.FreeHGlobal(buffer); }
             }
             throw new InvalidOperationException("USB device enumeration failed.");
+        }
+
+        internal static string[] ParseDeviceIds(string buffer)
+        {
+            if (string.IsNullOrEmpty(buffer) || buffer[0] == '\0')
+                return new string[0];
+            int end = buffer.IndexOf("\0\0", StringComparison.Ordinal);
+            if (end < 0)
+                throw new InvalidOperationException("The Windows device list is missing its terminator.");
+            return buffer.Substring(0, end).Split('\0');
         }
     }
 
